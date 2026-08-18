@@ -1,6 +1,18 @@
 # ---------------------------------------------------------------------------
 # AnaPico APUASYN20
 # ---------------------------------------------------------------------------
+#
+# Stopgap wrapper: all hardware I/O is delegated to the proven
+# exopy_hqc_legacy-based `Anapico1` driver (instruments_old/anapico.py),
+# held here as `self._legacy`. This class only adds a QCoDeS-compatible
+# surface (Parameters, validators, snapshot()) on top of it.
+#
+# To detach from exopy later: pick one parameter, replace its
+# get_cmd/set_cmd with raw SCPI - the exact command strings are already
+# visible in instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py, so
+# it's mostly transcription once you've verified each one against the
+# manual - and move on to the next. Nothing outside this file needs to
+# change while you do that.
 
 from __future__ import annotations
 
@@ -8,101 +20,96 @@ from typing import Any
 
 import numpy as np
 
-from qcodes.instrument import VisaInstrument
-from qcodes.instrument_drivers.Keysight.N52xx import KeysightPNAxBase
-from qcodes.parameters import Parameter, create_on_off_val_mapping
-from qcodes.validators import Enum, Numbers
+from qcodes.instrument import Instrument
+from qcodes.parameters import Parameter
+from qcodes.validators import Bool, Enum, Numbers
+
+from instruments_old.anapico import Anapico1
 
 
-class AnaPicoAPUASYN20(VisaInstrument):
+class AnaPicoAPUASYN20(Instrument):
     """
-    AnaPico APUASYN20 ultra-agile signal source (now sold by Keysight).
+    QCoDeS-compatible wrapper around the exopy-based `Anapico1` driver.
 
-    Single-channel, 8 kHz - 20 GHz.  The multi-channel sibling is the
-    APUASYN20-X; see ``channel`` below if you have one of those.
-
+    Single-channel, 8 kHz - 20 GHz. For the multi-channel APUASYN20-X,
+    wrap `Anapico4` (or `AnapicoNChannels` with the right `n_channels`)
+    the same way instead.
     """
-
-    default_terminator = "\n"
 
     def __init__(
         self,
         name: str,
         address: str,
-        channel: int = 1,
-        min_freq: float = 8e3,      # VERIFY
-        max_freq: float = 20e9,     # VERIFY
-        min_power: float = -20,     # VERIFY - depends on options
-        max_power: float = 20,      # VERIFY - depends on options
+        config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name, address, **kwargs)
+        super().__init__(name, **kwargs)
 
-        self._ch = channel
-        # On the single-channel APUASYN20 the ':SOURn:' prefix is accepted but
-        # optional.  On the -X you need it.  VERIFY against your manual.
-        p = f":SOUR{channel}"
+        self._legacy = Anapico1(address, name, config=config)
+        self._chan = self._legacy.channels[0]
 
         self.frequency: Parameter = self.add_parameter(
             "frequency",
             label="Frequency",
             unit="Hz",
-            get_cmd=f"{p}:FREQ?",
-            set_cmd=f"{p}:FREQ {{:.6f}}",
-            get_parser=float,
-            vals=Numbers(min_freq, max_freq),
+            get_cmd=lambda: self._chan.frequency,
+            set_cmd=lambda v: setattr(self._chan, "frequency", v),
+            vals=Numbers(min_value=0),
         )
 
         self.power: Parameter = self.add_parameter(
             "power",
             label="Output power",
             unit="dBm",
-            get_cmd=f"{p}:POW?",
-            set_cmd=f"{p}:POW {{:.3f}}",
-            get_parser=float,
-            vals=Numbers(min_power, max_power),
+            get_cmd=lambda: self._chan.power,
+            set_cmd=lambda v: setattr(self._chan, "power", v),
+            vals=Numbers(),
         )
 
         self.phase: Parameter = self.add_parameter(
             "phase",
             label="Phase",
             unit="rad",
-            get_cmd=f"{p}:PHAS?",
-            set_cmd=f"{p}:PHAS {{:.6f}}",
-            get_parser=float,
-            vals=Numbers(-np.pi, np.pi),   # VERIFY - some firmware uses degrees
+            get_cmd=lambda: self._chan.phase,
+            set_cmd=lambda v: setattr(self._chan, "phase", v),
+            vals=Numbers(-np.pi, np.pi),
         )
 
         self.output_enabled: Parameter = self.add_parameter(
             "output_enabled",
             label="Output enabled",
-            get_cmd=f":OUTP{channel}:STAT?",
-            set_cmd=f":OUTP{channel}:STAT {{}}",
-            val_mapping=create_on_off_val_mapping(on_val="1", off_val="0"),
+            get_cmd=lambda: self._chan.output,
+            set_cmd=lambda v: setattr(self._chan, "output", "ON" if v else "OFF"),
+            vals=Bool(),
         )
 
         self.reference_source: Parameter = self.add_parameter(
             "reference_source",
             label="Reference oscillator source",
-            get_cmd=":ROSC:SOUR?",
-            set_cmd=":ROSC:SOUR {}",
-            vals=Enum("INT", "EXT"),       # VERIFY
+            get_cmd=lambda: self._legacy.ref_oscillator,
+            set_cmd=lambda v: setattr(self._legacy, "ref_oscillator", v),
+            vals=Enum("INT", "EXT"),
         )
 
-        self.reference_frequency: Parameter = self.add_parameter(
-            "reference_frequency",
-            label="External reference frequency",
-            unit="Hz",
-            get_cmd=":ROSC:EXT:FREQ?",
-            set_cmd=":ROSC:EXT:FREQ {:.0f}",
-            get_parser=float,
+        self.oscillator_locked: Parameter = self.add_parameter(
+            "oscillator_locked",
+            label="Reference oscillator locked",
+            get_cmd=lambda: self._legacy.oscillator_lock,
+            vals=Bool(),
         )
 
-        self.connect_message()
+    def get_idn(self) -> dict[str, str | None]:
+        """Plain `Instrument` (unlike `VisaInstrument`) doesn't implement
+        `self.ask(...)`, which the base `Instrument.get_idn` relies on -
+        query through the wrapped exopy driver's own connection instead."""
+        idparts = [p.strip() for p in self._legacy.query("*IDN?").split(",", 3)]
+        idparts += [None] * (4 - len(idparts))
+        return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
+    # -- diagnostics, not covered by the exopy driver -----------------------
     def get_error(self) -> str:
         """Pop one entry off the instrument's error queue."""
-        return self.ask(":SYST:ERR?")
+        return self._legacy.query(":SYST:ERR?")
 
     def flush_errors(self) -> list[str]:
         """Drain the error queue; returns everything that was queued."""
@@ -113,5 +120,3 @@ class AnaPicoAPUASYN20(VisaInstrument):
                 break
             errors.append(err)
         return errors
-
-

@@ -41,17 +41,21 @@ class AWG_M8195A(BasicInstrument, M8195A):
     """
     
     #default config
+    #NOTE: pyarbtools.instruments.M8195A.configure() (checked against the
+    #pip-installable pyarbtools 2025.06.1) only accepts dacMode, memDiv,
+    #fs, refSrc, refFreq, amp1/2/3/4 and func - it raises KeyError on
+    #anything else. out_refSrc/mem_mode1/mem_mode4 used to be listed here
+    #and made this constructor crash immediately; if your installed
+    #pyarbtools is an older/different version that does support them,
+    #add them back.
     default_config = {
         'dacMode':'dual',
         'memDiv':1,
         'fs':65e9,
         'refSrc':'ext',
         'refFreq':10e6,
-        'out_refSrc':'ext',
         'amp1':1,
         'amp4':1,
-        'mem_mode1':'int',
-        'mem_mode4':'int',
         'func':'arb'
     }
     

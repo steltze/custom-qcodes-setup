@@ -221,3 +221,5 @@ main.py
 *.ipynb
 
 exopy_hqc_legacy/
+*.db
+*.h5

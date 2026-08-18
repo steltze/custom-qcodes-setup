@@ -1,157 +1,146 @@
 # ---------------------------------------------------------------------------
 # Keysight M8195A
 # ---------------------------------------------------------------------------
+#
+# Stopgap wrapper: all hardware I/O is delegated to the proven pyarbtools-
+# based `AWG_M8195A` driver (instruments_old/awg_M8195A.py), held here as
+# `self._legacy`. This class only adds a QCoDeS-compatible surface
+# (Parameters, validators, snapshot()) on top of it - in particular it does
+# NOT redo pyarbtools' waveform granularity/padding logic.
+#
+# To detach from pyarbtools later: pick one parameter, replace its
+# get_cmd/set_cmd with raw SCPI (verified against the M8195A programming
+# guide), and move on to the next. Nothing outside this file needs to
+# change while you do that.
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
-from qcodes.instrument import VisaInstrument
-from qcodes.parameters import Parameter, create_on_off_val_mapping
+from qcodes.instrument import Instrument
+from qcodes.parameters import Parameter
 from qcodes.validators import Enum, Numbers
 
+from instruments_old.awg_M8195A import AWG_M8195A
 
-class KeysightM8195A(VisaInstrument):
+class KeysightM8195A(Instrument):
     """
-    Keysight M8195A 65 GSa/s arbitrary waveform generator.
+    QCoDeS-compatible wrapper around the pyarbtools-based `AWG_M8195A`.
 
-    The AXIe module itself appears as a *register-based* PXI resource and
-    cannot be reached with SCPI.  Start the **M8195 Soft Front Panel**, which
-    publishes a SCPI server, and connect to the address it reports - typically::
-
-    Scalar settings are plain SCPI; waveform download is binary and is the one
-    part worth cross-checking against pyarbtools' implementation.
+    Every parameter below reads/writes an attribute of the wrapped
+    `AWG_M8195A` instance via its `configure()` method (e.g. `sample_rate`
+    <-> `self._legacy.fs` / `configure(fs=...)`). Waveform upload/playback
+    is forwarded straight to pyarbtools' `download_wfm`/`play`.
     """
 
-    default_terminator = "\n"
+    def __init__(
+        self,
+        name: str,
+        address: str,
+        config: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(name, **kwargs)
 
-    def __init__(self, name: str, address: str, **kwargs: Any) -> None:
-        super().__init__(name, address, **kwargs)
+        self._legacy = AWG_M8195A(address, name, config=config)
 
+        # vals below reflect pyarbtools.instruments.M8195A's own validation
+        # (checked against pyarbtools 2025.06.1) - configure() re-raises
+        # ValueError itself for anything outside these sets, this just
+        # fails fast with a clearer message.
         self.dac_mode: Parameter = self.add_parameter(
             "dac_mode",
             label="DAC mode",
-            get_cmd=":INST:DACM?",
-            set_cmd=":INST:DACM {}",
-            vals=Enum("SING", "DUAL", "FOUR", "MARK", "DCD", "DCM"),  # VERIFY
-            docstring="SING/DUAL/FOUR = 1/2/4 channels; MARK/DCD/DCM = "
-                      "marker and duplicate modes.",
+            get_cmd=lambda: self._legacy.dacMode,
+            set_cmd=lambda v: self._legacy.configure(dacMode=v),
+            vals=Enum("single", "dual", "four", "marker", "dcd", "dcmarker"),
+        )
+
+        self.mem_div: Parameter = self.add_parameter(
+            "mem_div",
+            label="Memory divider",
+            get_cmd=lambda: self._legacy.memDiv,
+            set_cmd=lambda v: self._legacy.configure(memDiv=v),
+            vals=Enum(1, 2, 4),
         )
 
         self.sample_rate: Parameter = self.add_parameter(
             "sample_rate",
             label="Sample rate",
             unit="Sa/s",
-            get_cmd=":FREQ:RAST?",
-            set_cmd=":FREQ:RAST {:.6f}",
-            get_parser=float,
-            vals=Numbers(53.76e9, 65e9),   # VERIFY - depends on DAC mode
+            get_cmd=lambda: self._legacy.fs,
+            set_cmd=lambda v: self._legacy.configure(fs=v),
+            vals=Numbers(self._legacy.min_rate, self._legacy.max_rate),
         )
 
         self.reference_source: Parameter = self.add_parameter(
             "reference_source",
             label="Reference clock source",
-            get_cmd=":ROSC:SOUR?",
-            set_cmd=":ROSC:SOUR {}",
-            vals=Enum("EXT", "AXI", "INT"),   # VERIFY
+            get_cmd=lambda: self._legacy.refSrc,
+            set_cmd=lambda v: self._legacy.configure(refSrc=v),
+            vals=Enum("axi", "int", "ext"),
         )
 
-        self.trigger_source: Parameter = self.add_parameter(
-            "trigger_source",
-            label="Trigger source",
-            get_cmd=":ARM:TRIG:SOUR?",
-            set_cmd=":ARM:TRIG:SOUR {}",
-            vals=Enum("TRIG", "EVEN", "INT"),  # VERIFY
+        self.reference_frequency: Parameter = self.add_parameter(
+            "reference_frequency",
+            label="Reference clock frequency",
+            unit="Hz",
+            get_cmd=lambda: self._legacy.refFreq,
+            set_cmd=lambda v: self._legacy.configure(refFreq=v),
+            vals=Numbers(min_value=0),
         )
 
-        # Per-channel parameters.  Kept flat (amplitude_1 ... amplitude_4)
-        # rather than as submodules for simplicity; convert to
-        # InstrumentChannel + ChannelList if you prefer.
-        for ch in range(1, 5):
+        self.function_mode: Parameter = self.add_parameter(
+            "function_mode",
+            label="Function mode",
+            get_cmd=lambda: self._legacy.func,
+            set_cmd=lambda v: self._legacy.configure(func=v),
+            vals=Enum("arb", "sts", "stsc"),
+        )
+
+        # Only channels 1 and 4 are set by AWG_M8195A.default_config (the
+        # pair used in 'dual' DAC mode); pyarbtools itself supports all
+        # four - add amplitude_2/3 the same way if you switch to 'four'
+        # mode. There is no mem_mode1..4 in pyarbtools' configure(); if you
+        # need it, it'll have to be raw SCPI.
+        for ch in (1, 4):
             self.add_parameter(
                 f"amplitude_{ch}",
                 label=f"Ch{ch} amplitude",
                 unit="V",
-                get_cmd=f":VOLT{ch}?",
-                set_cmd=f":VOLT{ch} {{:.4f}}",
-                get_parser=float,
-                vals=Numbers(0, 1.0),        # VERIFY
-            )
-            self.add_parameter(
-                f"offset_{ch}",
-                label=f"Ch{ch} offset",
-                unit="V",
-                get_cmd=f":VOLT{ch}:OFFS?",
-                set_cmd=f":VOLT{ch}:OFFS {{:.4f}}",
-                get_parser=float,
-            )
-            self.add_parameter(
-                f"output_{ch}",
-                label=f"Ch{ch} output enabled",
-                get_cmd=f":OUTP{ch}?",
-                set_cmd=f":OUTP{ch} {{}}",
-                val_mapping=create_on_off_val_mapping(on_val="1", off_val="0"),
+                get_cmd=lambda ch=ch: getattr(self._legacy, f"amp{ch}"),
+                set_cmd=lambda v, ch=ch: self._legacy.configure(**{f"amp{ch}": v}),
+                vals=Numbers(0.075, 1.0),
             )
 
-        self.connect_message()
+    def get_idn(self) -> dict[str, str | None]:
+        """`self._legacy` (pyarbtools) already queried `*idn?` once at
+        connect time and cached it as `.instId` - reuse that instead of
+        the base `Instrument.get_idn`, which calls `self.ask(...)` and
+        plain `Instrument` (unlike `VisaInstrument`) doesn't implement."""
+        idparts = [p.strip() for p in self._legacy.instId.split(",", 3)]
+        idparts += [None] * (4 - len(idparts))
+        return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
-    # -- run control --------------------------------------------------------
-    def run(self) -> None:
-        """Start signal generation."""
-        self.write(":INIT:IMM")
+    # -- waveform / run control, forwarded straight to pyarbtools ----------
+    def send_sine(
+        self, freq: float, phase: float, channel: int, amp: float | None = None
+    ) -> int:
+        """Recalculate the sample rate for clean granularity, then
+        download and play a sine on `channel`. See `AWG_M8195A.send_sine`."""
+        return self._legacy.send_sine(freq, phase, channel, amp=amp)
 
-    def stop(self) -> None:
-        """Stop signal generation."""
-        self.write(":ABOR")
+    def send_sine_keep_rate(
+        self, freq: float, phase: float, channel: int, amp: float | None = None
+    ) -> int:
+        """Like `send_sine`, but raises if `freq` isn't compatible with the
+        current sample rate. See `AWG_M8195A.send_sine_keep_rate`."""
+        return self._legacy.send_sine_keep_rate(freq, phase, channel, amp=amp)
 
-    # -- waveform handling --------------------------------------------------
-    def upload_waveform(
-        self,
-        waveform: np.ndarray,
-        channel: int = 1,
-        segment: int = 1,
-    ) -> None:
-        """
-        Download a waveform to a segment.
-
-        `waveform` should be float in [-1, 1]; it is scaled to signed 8-bit,
-        which is the M8195A's native DAC resolution.
-
-        The granularity / minimum-length rules depend on DAC mode and are the
-        most common source of "Data out of range" errors.  If this misbehaves,
-        compare against ``pyarbtools.instruments.M8195A.download_wfm``, which
-        already handles the padding rules (note pyarbtools is GPL-3).
-        """
-        wfm = np.asarray(waveform, dtype=float)
-        if np.max(np.abs(wfm)) > 1.0:
-            raise ValueError("waveform must be normalised to [-1, 1]")
-
-        data = np.int8(np.round(wfm * 127))
-
-        gran = 256          # VERIFY - depends on DAC mode
-        min_len = 1280      # VERIFY
-        if len(data) < min_len:
-            data = np.concatenate([data, np.zeros(min_len - len(data), dtype=np.int8)])
-        if len(data) % gran:
-            pad = gran - (len(data) % gran)
-            data = np.concatenate([data, np.zeros(pad, dtype=np.int8)])
-
-        self.write(f":TRAC{channel}:DEF {segment},{len(data)},0")
-        self.visa_handle.write_binary_values(
-            f":TRAC{channel}:DATA {segment},0,",
-            data,
-            datatype="b",
-        )
-        self.check_error()
-
-    def delete_all_waveforms(self, channel: int = 1) -> None:
-        self.write(f":TRAC{channel}:DEL:ALL")
-
-    # -- diagnostics --------------------------------------------------------
-    def check_error(self) -> None:
-        """Raise if the instrument's error queue is non-empty."""
-        err = self.ask(":SYST:ERR?")
-        if not err.startswith(("0,", "+0,")):
-            raise RuntimeError(f"{self.name} reported: {err}")
+    def send_sine_force_keep_rate(
+        self, freq: float, phase: float, channel: int, amp: float | None = None
+    ) -> int:
+        """Like `send_sine`, but keeps the current sample rate by
+        lengthening the waveform (Farey approximation). See
+        `AWG_M8195A.send_sine_force_keep_rate`."""
+        return self._legacy.send_sine_force_keep_rate(freq, phase, channel, amp=amp)
