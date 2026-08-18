@@ -8,7 +8,7 @@ from qcodes.instrument_drivers.Keysight.N52xx import KeysightPNAxBase
 
 
 # ---------------------------------------------------------------------------
-# 1. Keysight P5024A Streamline VNA
+# Keysight P5024A Streamline VNA
 # ---------------------------------------------------------------------------
 class KeysightP5024A(KeysightPNAxBase):
     """
