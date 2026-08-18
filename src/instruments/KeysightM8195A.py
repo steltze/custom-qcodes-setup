@@ -122,6 +122,13 @@ class KeysightM8195A(Instrument):
         idparts += [None] * (4 - len(idparts))
         return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
+    def get_config_info(self) -> dict[str, Any]:
+        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        .get_config_info` - `self._legacy` already implements it (it *is*
+        a `BasicInstrument`), just forward to it so this instrument can be
+        dropped straight into `BaseMeasurement.instruments`."""
+        return self._legacy.get_config_info()
+
     # -- waveform / run control, forwarded straight to pyarbtools ----------
     def send_sine(
         self, freq: float, phase: float, channel: int, amp: float | None = None
@@ -144,3 +151,45 @@ class KeysightM8195A(Instrument):
         lengthening the waveform (Farey approximation). See
         `AWG_M8195A.send_sine_force_keep_rate`."""
         return self._legacy.send_sine_force_keep_rate(freq, phase, channel, amp=amp)
+
+    def play(self, seg_id: int, ch: int = 1) -> None:
+        """Select waveform `seg_id`, turn on channel `ch`'s analog output,
+        and begin continuous playback. Needed after every `configure()`
+        call (e.g. an amplitude change) - `pyarbtools`'s `configure()`
+        stops output on every channel first, so playback of an
+        already-downloaded segment has to be explicitly resumed."""
+        self._legacy.play(seg_id, ch=ch)
+
+    def delete_segment(self, seg_id: int, ch: int = 1) -> None:
+        """Delete one waveform segment from a channel's segment memory."""
+        self._legacy.delete_segment(seg_id, ch=ch)
+
+    def clear_all_wfm(self) -> None:
+        """Clear all segments from segment memory, on every channel."""
+        self._legacy.clear_all_wfm()
+
+    def stop(self, ch: int = 1) -> None:
+        """Turn off one channel's analog output and abort playback."""
+        self._legacy.stop(ch=ch)
+
+    def safe_shutdown(self) -> None:
+        """Called by the measurement harness on any error/abort. Turns
+        output off on both channels used in 'dual' DAC mode (1 and 4 - see
+        the `default_config` note above) rather than wiping segment
+        memory, so it's fast and doesn't lose the last-programmed
+        waveform."""
+        self.stop(1)
+        self.stop(4)
+
+    def ask_if_done(self) -> str:
+        """Block until the AWG has finished processing pending commands
+        (e.g. the `play()` issued by `send_sine`).
+
+        NOTE: this method does not exist on `AWG_M8195A`/pyarbtools (checked
+        against the installed pyarbtools 2025.6.1 and this repo's
+        `instruments_old/awg_M8195A.py`) even though the old
+        `spectro_awgPump_sweep_...py` script calls it - that call was
+        already broken in the checked-in script. Implemented here as a
+        standard SCPI `*OPC?` blocking query, the same idiom
+        `agilent_pna.py::run_averaging` uses to wait for the PNA."""
+        return self._legacy.query("*OPC?")

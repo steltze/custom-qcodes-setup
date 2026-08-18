@@ -106,6 +106,18 @@ class AnaPicoAPUASYN20(Instrument):
         idparts += [None] * (4 - len(idparts))
         return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
+    def get_config_info(self) -> dict[str, Any]:
+        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        .get_config_info` - `self._legacy` already implements it (it *is*
+        a `BasicInstrument`), just forward to it so this instrument can be
+        dropped straight into `BaseMeasurement.instruments`."""
+        return self._legacy.get_config_info()
+
+    def safe_shutdown(self) -> None:
+        """Called by the measurement harness on any error/abort. Turns RF
+        output off."""
+        self.output_enabled(False)
+
     # -- diagnostics, not covered by the exopy driver -----------------------
     def get_error(self) -> str:
         """Pop one entry off the instrument's error queue."""
