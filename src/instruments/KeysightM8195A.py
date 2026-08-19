@@ -44,10 +44,6 @@ class KeysightM8195A(Instrument):
 
         self._legacy = AWG_M8195A(address, name, config=config)
 
-        # vals below reflect pyarbtools.instruments.M8195A's own validation
-        # (checked against pyarbtools 2025.06.1) - configure() re-raises
-        # ValueError itself for anything outside these sets, this just
-        # fails fast with a clearer message.
         self.dac_mode: Parameter = self.add_parameter(
             "dac_mode",
             label="DAC mode",
@@ -173,23 +169,16 @@ class KeysightM8195A(Instrument):
         self._legacy.stop(ch=ch)
 
     def safe_shutdown(self) -> None:
-        """Called by the measurement harness on any error/abort. Turns
-        output off on both channels used in 'dual' DAC mode (1 and 4 - see
-        the `default_config` note above) rather than wiping segment
-        memory, so it's fast and doesn't lose the last-programmed
-        waveform."""
+        """Called by the measurement harness's `safe_run()` on *every*
+        exit from a run - a clean finish as much as an error/abort, not
+        error/abort only. Turns output off on both channels used in
+        'dual' DAC mode (1 and 4 - see the `default_config` note above)
+        rather than wiping segment memory, so it's fast and doesn't lose
+        the last-programmed waveform."""
         self.stop(1)
         self.stop(4)
 
     def ask_if_done(self) -> str:
         """Block until the AWG has finished processing pending commands
-        (e.g. the `play()` issued by `send_sine`).
-
-        NOTE: this method does not exist on `AWG_M8195A`/pyarbtools (checked
-        against the installed pyarbtools 2025.6.1 and this repo's
-        `instruments_old/awg_M8195A.py`) even though the old
-        `spectro_awgPump_sweep_...py` script calls it - that call was
-        already broken in the checked-in script. Implemented here as a
-        standard SCPI `*OPC?` blocking query, the same idiom
-        `agilent_pna.py::run_averaging` uses to wait for the PNA."""
+        (e.g. the `play()` issued by `send_sine`)."""
         return self._legacy.query("*OPC?")

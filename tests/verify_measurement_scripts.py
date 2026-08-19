@@ -618,10 +618,16 @@ def main() -> None:
             dset = data_group["data"]
             assert dset.shape == (n_current, n_pico_freq, 1)  # freq_spec=(1e9, 1) -> 1 CW point
             assert dset.dtype == complex
-            assert "time" in dset.attrs
             assert dset.dims[0].label == "Currents (A)"
             assert dset.dims[1].label == "Anapico frequency (Hz)"
             assert dset.dims[2].label == "CW Time (s)"
+            # every point's timestamp is kept now, not just the last one
+            # (can't assert they're all distinct - the fake sweep runs
+            # fast enough that several points can land in the same
+            # second, and timestamps only have 1s resolution)
+            time_dset = data_group["time"]
+            assert time_dset.shape == (n_current, n_pico_freq)
+            assert all(t for row in time_dset[()] for t in row)
         print("TwoToneSpectro exported .h5 (single shared 3-D dataset): PASS")
 
         db_path = tmp / "experiments.db"

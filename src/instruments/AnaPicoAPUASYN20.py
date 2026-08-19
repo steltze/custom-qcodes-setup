@@ -114,8 +114,9 @@ class AnaPicoAPUASYN20(Instrument):
         return self._legacy.get_config_info()
 
     def safe_shutdown(self) -> None:
-        """Called by the measurement harness on any error/abort. Turns RF
-        output off."""
+        """Called by the measurement harness's `safe_run()` on *every*
+        exit from a run - a clean finish as much as an error/abort, not
+        error/abort only. Turns RF output off."""
         self.output_enabled(False)
 
     # -- diagnostics, not covered by the exopy driver -----------------------

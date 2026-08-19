@@ -29,7 +29,7 @@ from qcodes_utils.measurement_run import (  # noqa: E402
 from .base_measurement import BaseMeasurement
 
 #: order the old script assembled the 2x2 crosstalk matrix in, before
-#: transposing to (main_amp, freq, 2, 2) - see _export_h5 below.
+#: transposing to (main_amp, freq, 2, 2) - see _save_point_to_h5 below.
 _MATRIX_POSITION = {
     "Sig1Sig1": (0, 0),
     "Sig1Sig2": (0, 1),
@@ -101,139 +101,120 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         )
         self.instruments = (self.vna, self.pump, self.yoko)
         self.main_ch = self.params["main_channel"]
-        # call the super at the end!
+        
         super().__init__(save_path, circuit_path)
 
     def execute(self):
-        dc_current = np.linspace(
+        self._setup_sweep_coordinates()
+        self._setup_instruments()
+        self._setup_qcodes_experiment()
+        self._setup_h5_axes()
+        self._run_sweep()
+
+    def _setup_sweep_coordinates(self):
+        """Every array that defines this sweep. Pure math - no
+        instrument, qcodes, or h5py calls."""
+        self._dc_current = np.linspace(
             self.params["current_start"], self.params["current_end"], self.params["n_current"]
         )
-        self.vna.power_slope(self.params["power_slope"])
-        self.vna.power_slope_state(1)
-        pump_freqs = np.asarray(self.params["freqs"])
-        n_freq = len(pump_freqs)
-        n_main_amp = self.params["n_main_amp"]
+        self._pump_freqs = np.asarray(self.params["freqs"])
+        self._n_freq = len(self._pump_freqs)
+        self._n_main_amp = self.params["n_main_amp"]
 
-        main_pump_amps = np.zeros((n_freq, n_main_amp))
-        for i in range(n_freq):
-            main_pump_amps[i] = np.linspace(
-                self.params["main_amp_starts"][i], self.params["main_amp_ends"][i], n_main_amp
+        self._main_pump_amps = np.zeros((self._n_freq, self._n_main_amp))
+        for i in range(self._n_freq):
+            self._main_pump_amps[i] = np.linspace(
+                self.params["main_amp_starts"][i],
+                self.params["main_amp_ends"][i],
+                self._n_main_amp,
             )
 
+    def _setup_instruments(self):
+        """Configure the VNA's power slope, take the one reference sweep
+        whose frequency axis is shared by the whole measurement, and put
+        the AWG at its safe starting amplitude. Only talks to
+        `self.vna`/`self.pump`."""
+        self.vna.power_slope(self.params["power_slope"])
+        self.vna.power_slope_state(1)
         self.vna.run_averaging()
-        freq_data = self.vna.read_freq_data()
-        with h5.File(self.save_file_path, "r+") as file:
-            data_group = file["data"]
-            data_group.create_dataset("Vna frequencies (Hz)", data=freq_data)
-            data_group.create_dataset("Pump frequencies (Hz)", data=pump_freqs)
-            data_group.create_dataset("Main pump amps (Vpk-pk)", data=main_pump_amps)
-            data_group.create_dataset("DC current (A)", data=dc_current)
+        self._freq_data = self.vna.read_freq_data()
 
-        experiment = open_experiment(
+        self._amp_param = getattr(self.pump, f"amplitude_{self.main_ch}")
+        self._amp_param(_MIN_AMP)
+
+    def _setup_qcodes_experiment(self):
+        """Open the sqlite .db/experiment new runs get added to, and
+        snapshot the station + this sweep's params as run metadata. Only
+        talks to the qcodes API."""
+        self._experiment = open_experiment(
             self.save_file_path,
             experiment_name="spectro_awgPump_sweep_flux",
             sample_name=Path(self.circuit_path).stem,
         )
-        station = Station(self.vna, self.pump, self.yoko)
-        run_metadata = instrument_metadata(self.instruments, self.params, self.circuit_path)
-        vna_labels = self._vna_measurement_labels
+        self._station = Station(self.vna, self.pump, self.yoko)
+        self._run_metadata = instrument_metadata(
+            self.instruments, self.params, self.circuit_path
+        )
 
-        # prepare pump, safe value
-        amp_param = getattr(self.pump, f"amplitude_{self.main_ch}")
-        amp_param(_MIN_AMP)
+    def _setup_h5_axes(self):
+        """Write the sweep's static axes into `self.save_file_path`'s
+        `data` group - the four datasets the old script wrote once,
+        before ever touching an individual `(current, freq)` file. Only
+        talks to h5py."""
+        with h5.File(self.save_file_path, "r+") as file:
+            data_group = file["data"]
+            data_group.create_dataset("Vna frequencies (Hz)", data=self._freq_data)
+            data_group.create_dataset("Pump frequencies (Hz)", data=self._pump_freqs)
+            data_group.create_dataset(
+                "Main pump amps (Vpk-pk)", data=self._main_pump_amps
+            )
+            data_group.create_dataset("DC current (A)", data=self._dc_current)
+
+    def _run_sweep(self):
+        """Drive the DC current and pump frequency/segment, delegating
+        each `(current, freq)` pair's amplitude sweep to
+        `_run_one_file`."""
         seg_id_main = None
-        total_loops = len(dc_current) * n_freq * n_main_amp
+        total_loops = len(self._dc_current) * self._n_freq * self._n_main_amp
 
         with safe_run(self.instruments):
             bar = tqdm()
             bar.reset(total=total_loops)
-            for id_current, current in enumerate(dc_current):
+            for id_current, current in enumerate(self._dc_current):
                 self.yoko.current(current)
-                for id_freq, freq in enumerate(pump_freqs):
+                for id_freq, freq in enumerate(self._pump_freqs):
                     if seg_id_main is not None:
                         self.pump.delete_segment(seg_id_main, ch=self.main_ch)
                     seg_id_main = self.pump.send_sine(freq, 0, self.main_ch, _MIN_AMP)
 
-                    save_file_end_name = f"_current{id_current}_freq{id_freq}.h5"
-                    file_path = self.save_file_path[:-3] + save_file_end_name
-                    self._run_one_file(
-                        experiment,
-                        station,
-                        run_metadata,
-                        amp_param,
-                        seg_id_main,
-                        main_pump_amps[id_freq],
-                        vna_labels,
-                        bar,
-                        file_path,
-                        freq_data,
+                    file_path = (
+                        self.save_file_path[:-3] + f"_current{id_current}_freq{id_freq}.h5"
                     )
+                    self._run_one_file(seg_id_main, self._main_pump_amps[id_freq], bar, file_path)
             bar.refresh()
             self.pump.clear_all_wfm()
 
-    def _run_one_file(
-        self,
-        experiment,
-        station,
-        run_metadata,
-        amp_param,
-        seg_id_main,
-        requested_amps,
-        vna_labels,
-        bar,
-        file_path,
-        freq_data,
-    ):
+    def _run_one_file(self, seg_id_main, requested_amps, bar, file_path):
         """Measure one `(current, freq)` pair's amplitude sweep, writing
         into its own qcodes run *and* its own legacy-shaped `.h5` file
-        (`data`, fixed shape `(n_main_amp, n_freq, 2, 2)`, pre-allocated
-        up front exactly like the old script did) point by point as each
-        amplitude is measured - not rebuilt/re-read from the db - so a
-        crash mid-sub-run only loses that one file's still-unmeasured
-        amplitudes, not the ones already on disk. Amplitudes skipped for
-        being below the 75mV floor are left as zero rows, flagged in
-        `data.attrs['skipped_main_amp_indices']` rather than silently
-        indistinguishable from a real all-zero measurement."""
-        main_amp_param = Parameter(
-            "main_amp", label="Pump amplitude", unit="Vpk-pk", get_cmd=None, set_cmd=None
-        )
-        freq_param = Parameter(
-            "vna_frequency", label="VNA frequency", unit="Hz", get_cmd=None, set_cmd=None
-        )
-        time_param = Parameter("time", label="Timestamp", get_cmd=None, set_cmd=None)
-        trace_params = {
-            label: Parameter(label, label=label, unit="", get_cmd=None, set_cmd=None)
-            for label in vna_labels
-        }
-
-        meas = Measurement(
-            name="spectro_awgPump_sweep_flux", exp=experiment, station=station
-        )
-        meas.register_parameter(main_amp_param, paramtype="numeric")
-        meas.register_parameter(freq_param, paramtype="array")
-        meas.register_parameter(time_param, setpoints=(main_amp_param,), paramtype="text")
-        for param in trace_params.values():
-            meas.register_parameter(
-                param, setpoints=(main_amp_param, freq_param), paramtype="array"
-            )
-
+        point by point as each amplitude is measured - not rebuilt/
+        re-read from the db - so a crash mid-sub-run only loses that
+        one file's still-unmeasured amplitudes, not the ones already on
+        disk. Amplitudes skipped for being below the 75mV floor are left
+        as zero rows, flagged in `data.attrs['skipped_main_amp_indices']`
+        rather than silently indistinguishable from a real all-zero
+        measurement."""
         n_main_amp = len(requested_amps)
-        n_freq = len(freq_data)
-        flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 15.0))
+        meas = self._setup_qcodes_run()
+        flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 10.0))
         skipped_values: list[float] = []
         skipped_indices: list[int] = []
 
         with h5.File(file_path, "w") as file:
-            dset = file.create_dataset(
-                "data", (n_main_amp, n_freq, 2, 2), dtype="complex128"
-            )
-            dset.dims[0].label = "Main pump amps"
-            dset.dims[1].label = "Vna frequencies (Hz)"
-            dset.dims[2].label = "X in SigXSigY"
-            dset.dims[3].label = "Y in SigXSigY"
+            dset = self._setup_h5_dataset(file, n_main_amp)
 
             with meas.run() as datasaver:
-                for key, value in run_metadata.items():
+                for key, value in self._run_metadata.items():
                     datasaver.dataset.add_metadata(key, value)
 
                 for idx, main_amp in enumerate(requested_amps):
@@ -243,33 +224,16 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                         bar.update()
                         continue
 
-                    amp_param(main_amp)
-                    self.pump.play(seg_id_main, self.main_ch)
-                    self.pump.ask_if_done()
+                    # take measurement
+                    trace_data = self._measure_one_point(main_amp, seg_id_main)
+
                     time_str = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-                    self.vna.run_averaging()
-                    trace_data = {
-                        label: self.vna.read_raw_data(label) for label in vna_labels
-                    }
-
-                    datasaver.add_result(
-                        (main_amp_param, main_amp),
-                        (freq_param, freq_data),
-                        (time_param, time_str),
-                        *[
-                            (trace_params[label], trace_data[label])
-                            for label in vna_labels
-                        ],
-                    )
-
-                    block = np.empty((n_freq, 2, 2), dtype="complex128")
-                    for label, (i, j) in _MATRIX_POSITION.items():
-                        block[:, i, j] = trace_data[label]
-                    dset[idx] = block
-                    dset.attrs["time"] = time_str
+                    # old .h5
+                    self._save_point_to_h5(dset, idx, time_str, trace_data)
+                    # qcodes .db
+                    self._save_point_to_db(datasaver, main_amp, time_str, trace_data)
 
                     bar.update()
-
                     if flush_gate.due():
                         file.flush()
                         datasaver.flush_data_to_database(block=False)
@@ -280,3 +244,81 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
 
             dset.attrs["skipped_main_amp_indices"] = np.array(skipped_indices, dtype=int)
             file.flush()
+
+    def _measure_one_point(self, main_amp, seg_id_main):
+        """Set the pump amplitude, play it, and read back the VNA trace
+        for every configured measurement. Only talks to
+        `self.pump`/`self.vna` - no qcodes, no h5py."""
+        self._amp_param(main_amp)
+        self.pump.play(seg_id_main, self.main_ch)
+        self.pump.ask_if_done()
+        
+        self.vna.run_averaging()
+        trace_data = {
+            label: self.vna.read_raw_data(label) for label in self._vna_measurement_labels
+        }
+        return trace_data
+
+    def _setup_qcodes_run(self):
+        """Register a fresh Measurement + Parameters for one `(current,
+        freq)` sub-run. Sets `self._qc_*`, read by `_save_point_to_db`."""
+        vna_labels = self._vna_measurement_labels
+        self._qc_main_amp_param = Parameter(
+            "main_amp", label="Pump amplitude", unit="Vpk-pk", get_cmd=None, set_cmd=None
+        )
+        self._qc_freq_param = Parameter(
+            "vna_frequency", label="VNA frequency", unit="Hz", get_cmd=None, set_cmd=None
+        )
+        self._qc_time_param = Parameter("time", label="Timestamp", get_cmd=None, set_cmd=None)
+        self._qc_trace_params = {
+            label: Parameter(label, label=label, unit="", get_cmd=None, set_cmd=None)
+            for label in vna_labels
+        }
+
+        meas = Measurement(
+            name="spectro_awgPump_sweep_flux", exp=self._experiment, station=self._station
+        )
+        meas.register_parameter(self._qc_main_amp_param, paramtype="numeric")
+        meas.register_parameter(self._qc_freq_param, paramtype="array")
+        meas.register_parameter(
+            self._qc_time_param, setpoints=(self._qc_main_amp_param,), paramtype="text"
+        )
+        for param in self._qc_trace_params.values():
+            meas.register_parameter(
+                param,
+                setpoints=(self._qc_main_amp_param, self._qc_freq_param),
+                paramtype="array",
+            )
+        return meas
+
+    def _save_point_to_db(self, datasaver, main_amp, time_str, trace_data):
+        """One point -> one row in the qcodes run."""
+        datasaver.add_result(
+            (self._qc_main_amp_param, main_amp),
+            (self._qc_freq_param, self._freq_data),
+            (self._qc_time_param, time_str),
+            *[
+                (self._qc_trace_params[label], trace_data[label])
+                for label in self._vna_measurement_labels
+            ],
+        )
+
+    def _setup_h5_dataset(self, file, n_main_amp):
+        """Pre-allocate one sub-run's `data` array at its full final
+        shape, exactly like the old script did."""
+        n_freq = len(self._freq_data)
+        dset = file.create_dataset("data", (n_main_amp, n_freq, 2, 2), dtype="complex128")
+        dset.dims[0].label = "Main pump amps"
+        dset.dims[1].label = "Vna frequencies (Hz)"
+        dset.dims[2].label = "X in SigXSigY"
+        dset.dims[3].label = "Y in SigXSigY"
+        return dset
+
+    def _save_point_to_h5(self, dset, idx, time_str, trace_data):
+        """One point -> one cell of the pre-allocated `data` array."""
+        n_freq = len(self._freq_data)
+        block = np.empty((n_freq, 2, 2), dtype="complex128")
+        for label, (i, j) in _MATRIX_POSITION.items():
+            block[:, i, j] = trace_data[label]
+        dset[idx] = block
+        dset.attrs["time"] = time_str

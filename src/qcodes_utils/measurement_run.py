@@ -82,7 +82,10 @@ class PeriodicFlush:
     more, unconditionally, after the loop ends.
     """
 
-    def __init__(self, interval: float = 15.0) -> None:
+    def __init__(self, interval: float = 60.0) -> None:
+        """
+        internval: in seconds
+        """
         self.interval = interval
         self._last = time.monotonic()
 
@@ -100,11 +103,10 @@ def safe_run(instruments: Iterable[InstrumentBase]):
     its safe state and close its connection afterwards.
 
     On the way out, every instrument's `safe_shutdown()` (if it defines
-    one - RF/current output off, no waveform memory wiped) is called even
-    on an exception or Ctrl-C, which the old scripts' own end-of-run
-    cleanup did not guarantee (it only ran after a clean `execute()`
-    return). Connections are always closed afterwards either way, so a run
-    never leaves a stale VISA session behind.
+    one - RF/current output off, no waveform memory wiped) is called
+    unconditionally - a clean finish as much as an exception or Ctrl-C,
+    not just the abort case. Connections are always closed afterwards
+    either way, so a run never leaves a stale VISA session behind.
     """
     instruments = list(instruments)
     try:

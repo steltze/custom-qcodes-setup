@@ -101,125 +101,200 @@ class TwoToneSpectro(BaseMeasurement):
         super().__init__(save_path, circuit_path)
 
     def execute(self):
-        currents = np.array(self.params["currents"])
-        vna_freqs = np.array(self.params["vna_freqs"])
-        pico_freqs = np.array(self.params["pico_freqs"])
-        pico_powers = np.array(self.params["pico_powers"])
-        (vna_meas,) = self._vna_measurement_labels
+        self._setup_sweep_coordinates()
+        self._setup_instruments()
+        self._setup_qcodes_experiment()
+        self._run_sweep()
 
-        experiment = open_experiment(
+    # -- setup: sweep coordinates ---------------------------------------
+    def _setup_sweep_coordinates(self):
+        """Every array that defines this sweep. Pure math - no
+        instrument, qcodes, or h5py calls."""
+        self._currents = np.array(self.params["currents"])
+        self._vna_freqs = np.array(self.params["vna_freqs"])
+        self._pico_freqs = np.array(self.params["pico_freqs"])
+        self._pico_powers = np.array(self.params["pico_powers"])
+
+    # -- setup: instruments -----------------------------------------------
+    def _setup_instruments(self):
+        """Find out how many CW time-points the VNA is currently
+        configured for, so the .h5 dataset can be pre-allocated with the
+        right shape. Only talks to `self.vna`."""
+        self._sweep_points = self.vna.points()
+
+    def _setup_qcodes_experiment(self):
+        """Open the sqlite .db/experiment this run gets added to, and
+        snapshot the station + this sweep's params as run metadata. Only
+        talks to the qcodes API."""
+        self._experiment = open_experiment(
             self.save_file_path,
             experiment_name="two_tone_spectro",
             sample_name=Path(self.circuit_path).stem,
         )
-        station = Station(self.vna, self.pico, self.yoko)
-        run_metadata = instrument_metadata(
+        self._station = Station(self.vna, self.pico, self.yoko)
+        self._run_metadata = instrument_metadata(
             self.instruments, self.params, self.circuit_path
         )
 
-        current_param = Parameter(
+    def _setup_h5(self, file):
+        """Pre-allocate the shared 3-D `data` array at its full final
+        size, plus the four fixed 1-D axis datasets - exactly like the
+        old script did - and a `time` array to hold every point's
+        timestamp (the old script only ever kept the last one, see
+        `_save_point_to_h5`). Only talks to h5py."""
+        data_group = file["data"]
+        data_group.create_dataset("Vna frequencies (Hz)", data=self._vna_freqs)
+        data_group.create_dataset("Currents (A)", data=self._currents)
+        data_group.create_dataset("Anapico frequencies (Hz)", data=self._pico_freqs)
+        data_group.create_dataset("Anapico powers (dBm)", data=self._pico_powers)
+        dset = data_group.create_dataset(
+            "data",
+            (len(self._currents), len(self._pico_freqs), self._sweep_points),
+            dtype="complex128",
+        )
+        dset.dims[0].label = "Currents (A)"
+        dset.dims[1].label = "Anapico frequency (Hz)"
+        dset.dims[2].label = "CW Time (s)"
+        time_dset = data_group.create_dataset(
+            "time",
+            (len(self._currents), len(self._pico_freqs)),
+            dtype=h5.string_dtype(),
+        )
+        time_dset.dims[0].label = "Currents (A)"
+        time_dset.dims[1].label = "Anapico frequency (Hz)"
+        return dset, time_dset
+
+    def _run_sweep(self):
+        """Measure once per `(current, pico frequency)` pair, then hand
+        the result to both the qcodes run and the legacy .h5. Interleaved
+        on purpose (not "db first, .h5 exported afterwards"): this is
+        the biggest sweep of the four (68017 points / ~69min in the
+        original notebook) with no other natural checkpoint, so writing
+        each point into both the open .h5 and the datasaver as soon as
+        it's measured is what makes a crash/power-loss lose at most the
+        last few points, never the whole file. `PeriodicFlush` only
+        throttles how often that's pushed to disk with an OS-level
+        flush, it never holds extra points in memory."""
+        with safe_run(self.instruments), h5.File(self.save_file_path, "r+") as file:
+            dset, time_dset = self._setup_h5(file)
+            self.pico.output_enabled(True)
+
+            meas = self._setup_qcodes_run()
+            flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 300.0))
+
+            bar = tqdm()
+            bar.reset(total=len(self._currents) * len(self._pico_freqs))
+
+            with meas.run() as datasaver:
+                for key, value in self._run_metadata.items():
+                    datasaver.dataset.add_metadata(key, value)
+
+                for i_current, current in enumerate(self._currents):
+                    self.yoko.current(current)
+                    self.vna.cw(self._vna_freqs[i_current])
+                    for i_pico_freq, pico_freq in enumerate(self._pico_freqs):
+
+                        trace_data, time_str = self._measure_one_point(i_pico_freq)
+
+                        self._save_point_to_h5(
+                            dset, time_dset, i_current, i_pico_freq, time_str, trace_data
+                        )
+
+                        self._save_point_to_db(
+                            datasaver, i_current, current, i_pico_freq, time_str, trace_data
+                        )
+
+                        bar.update()
+                        if flush_gate.due():
+                            file.flush()
+                            datasaver.flush_data_to_database(block=False)
+
+            bar.refresh()
+            file.flush()
+
+    def _measure_one_point(self, i_pico_freq):
+        """Set the Anapico's frequency/power and read back the VNA
+        trace. Only talks to `self.pico`/`self.vna` - no qcodes, no
+        h5py."""
+        pico_freq = self._pico_freqs[i_pico_freq]
+        self.pico.frequency(pico_freq)
+        self.pico.power(self._pico_powers[i_pico_freq])
+        self.vna.run_averaging()
+        time_str = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+        (vna_meas,) = self._vna_measurement_labels
+        trace_data = self.vna.read_raw_data(vna_meas)
+        return trace_data, time_str
+
+    def _setup_qcodes_run(self):
+        """Register the Measurement + Parameters for this sweep. Sets
+        `self._qc_*`, read by `_save_point_to_db`."""
+        (vna_meas,) = self._vna_measurement_labels
+        self._qc_current_param = Parameter(
             "current", label="DC current", unit="A", get_cmd=None, set_cmd=None
         )
-        pico_freq_param = Parameter(
+        self._qc_pico_freq_param = Parameter(
             "pico_frequency",
             label="Anapico frequency",
             unit="Hz",
             get_cmd=None,
             set_cmd=None,
         )
-        vna_freq_setting_param = Parameter(
+        self._qc_vna_freq_setting_param = Parameter(
             "vna_frequency_setting",
             label="VNA CW frequency",
             unit="Hz",
             get_cmd=None,
             set_cmd=None,
         )
-        pico_power_param = Parameter(
+        self._qc_pico_power_param = Parameter(
             "pico_power", label="Anapico power", unit="dBm", get_cmd=None, set_cmd=None
         )
-        time_param = Parameter("time", label="Timestamp", get_cmd=None, set_cmd=None)
-        trace_param = Parameter(
+        self._qc_time_param = Parameter("time", label="Timestamp", get_cmd=None, set_cmd=None)
+        self._qc_trace_param = Parameter(
             vna_meas, label=vna_meas, unit="", get_cmd=None, set_cmd=None
         )
 
-        meas = Measurement(name="two_tone_spectro", exp=experiment, station=station)
-        meas.register_parameter(current_param, paramtype="numeric")
-        meas.register_parameter(pico_freq_param, paramtype="numeric")
+        meas = Measurement(name="two_tone_spectro", exp=self._experiment, station=self._station)
+        meas.register_parameter(self._qc_current_param, paramtype="numeric")
+        meas.register_parameter(self._qc_pico_freq_param, paramtype="numeric")
         meas.register_parameter(
-            vna_freq_setting_param, setpoints=(current_param,), paramtype="numeric"
+            self._qc_vna_freq_setting_param,
+            setpoints=(self._qc_current_param,),
+            paramtype="numeric",
         )
         meas.register_parameter(
-            pico_power_param, setpoints=(pico_freq_param,), paramtype="numeric"
+            self._qc_pico_power_param,
+            setpoints=(self._qc_pico_freq_param,),
+            paramtype="numeric",
         )
         meas.register_parameter(
-            time_param, setpoints=(current_param, pico_freq_param), paramtype="text"
+            self._qc_time_param,
+            setpoints=(self._qc_current_param, self._qc_pico_freq_param),
+            paramtype="text",
         )
         meas.register_parameter(
-            trace_param, setpoints=(current_param, pico_freq_param), paramtype="array"
+            self._qc_trace_param,
+            setpoints=(self._qc_current_param, self._qc_pico_freq_param),
+            paramtype="array",
+        )
+        return meas
+
+    def _save_point_to_db(self, datasaver, i_current, current, i_pico_freq, time_str, trace_data):
+        """One point -> one row in the qcodes run."""
+        datasaver.add_result(
+            (self._qc_current_param, current),
+            (self._qc_pico_freq_param, self._pico_freqs[i_pico_freq]),
+            (self._qc_vna_freq_setting_param, self._vna_freqs[i_current]),
+            (self._qc_pico_power_param, self._pico_powers[i_pico_freq]),
+            (self._qc_time_param, time_str),
+            (self._qc_trace_param, trace_data),
         )
 
-        # This sweep is the biggest of the four (68017 points / ~69min in
-        # the original notebook) with no natural checkpoint, so - like
-        # `SpectroDCSweepSlope` - the legacy `.h5` is written cell by cell
-        # into the *same* file `BaseMeasurement` already created as each
-        # point is measured, not rebuilt/re-read from the db afterwards.
-        # The shared 3-D `data` dataset is pre-allocated at its full final
-        # size up front (exactly like the old script did), so filling one
-        # cell is O(1) regardless of how far into the sweep we are.
-        sweep_points = self.vna.points()
-        flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 15.0))
-
-        with safe_run(self.instruments), h5.File(self.save_file_path, "r+") as file:
-            data_group = file["data"]
-            data_group.create_dataset("Vna frequencies (Hz)", data=vna_freqs)
-            data_group.create_dataset("Currents (A)", data=currents)
-            data_group.create_dataset("Anapico frequencies (Hz)", data=pico_freqs)
-            data_group.create_dataset("Anapico powers (dBm)", data=pico_powers)
-            dset = data_group.create_dataset(
-                "data",
-                (len(currents), len(pico_freqs), sweep_points),
-                dtype="complex128",
-            )
-            dset.dims[0].label = "Currents (A)"
-            dset.dims[1].label = "Anapico frequency (Hz)"
-            dset.dims[2].label = "CW Time (s)"
-
-            self.pico.output_enabled(True)
-
-            with meas.run() as datasaver:
-                for key, value in run_metadata.items():
-                    datasaver.dataset.add_metadata(key, value)
-
-                for i_current, current in enumerate(tqdm(currents)):
-                    self.yoko.current(current)
-                    self.vna.cw(vna_freqs[i_current])
-                    for i_pico_freq, pico_freq in enumerate(pico_freqs):
-                        self.pico.frequency(pico_freq)
-                        self.pico.power(pico_powers[i_pico_freq])
-                        self.vna.run_averaging()
-                        time_str = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-                        trace_data = self.vna.read_raw_data(vna_meas)
-
-                        datasaver.add_result(
-                            (current_param, current),
-                            (pico_freq_param, pico_freq),
-                            (vna_freq_setting_param, vna_freqs[i_current]),
-                            (pico_power_param, pico_powers[i_pico_freq]),
-                            (time_param, time_str),
-                            (trace_param, trace_data),
-                        )
-
-                        # Old script overwrote this same dataset-level attr
-                        # on every one of the (n_current*n_pico_freq)
-                        # writes, so only the very last timestamp ever
-                        # survived - reproduced exactly, not fixed into a
-                        # per-cell array, to match the legacy format.
-                        dset[i_current, i_pico_freq] = trace_data
-                        dset.attrs["time"] = time_str
-
-                        if flush_gate.due():
-                            file.flush()
-                            datasaver.flush_data_to_database(block=False)
-
-            file.flush()
-            self.pico.output_enabled(False)
+    def _save_point_to_h5(self, dset, time_dset, i_current, i_pico_freq, time_str, trace_data):
+        """One point -> one cell of the pre-allocated `data` array, and
+        the matching cell of `time`. The old script overwrote one shared
+        dataset-level attr on every one of the (n_current*n_pico_freq)
+        writes, so only the very last timestamp ever survived - fixed
+        here, every point's timestamp is now kept."""
+        dset[i_current, i_pico_freq] = trace_data
+        time_dset[i_current, i_pico_freq] = time_str

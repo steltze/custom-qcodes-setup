@@ -44,10 +44,6 @@ class KeysightP5024A(KeysightPNAxBase):
         inst.ask(':SYST:CAP:HARD:PORT:COUN?')   # number of ports
     """
 
-    #: Same defaults as `instruments_old/vna_P5024A.py::VNA_P5024A`. Only
-    #: these keys are ever read out of a `config` dict passed to
-    #: `configure()` - anything else is silently ignored, same as the old
-    #: `BasicInstrument`-based filtering.
     default_config: dict[str, Any] = {
         "sweep_type": "LIN",
         "measurements": (("default trace", "S11"),),
@@ -233,7 +229,9 @@ class KeysightP5024A(KeysightPNAxBase):
         next(iter(self._traces_by_label.values())).run_sweep()
 
     def safe_shutdown(self) -> None:
-        """Called by the measurement harness on any error/abort. Turns RF
-        output off - lighter than `reset_config()`, which would also wipe
-        the configured traces."""
+        """Called by the measurement harness's `safe_run()` on *every*
+        exit from a run - a clean finish as much as an error/abort, not
+        error/abort only. Turns RF output off; lighter than
+        `reset_config()`, which would also wipe the configured traces.
+        """
         self.output(False)
