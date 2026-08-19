@@ -200,7 +200,7 @@ class FakePNAResource:
             return "1"
         if low == "syst:err":
             return '+0,"No error"'
-        if low == "outp":
+        if low in ("outp", "output"):
             return "1" if self._output else "0"
         if low == "sour:pow1:slop:stat":
             return str(self._power_slope_state)
