@@ -73,7 +73,18 @@ class AWG_M8195A(BasicInstrument, M8195A):
         self.max_rate = 65e9
     
     def find_waveform_k_nper(self, freq, max_iterations=1000):
-        k = 1 #number of granularities of data
+        # M8195A has a hard minimum waveform length (pyarbtools.instruments
+        # .M8195A sets self.minLen = 1280), separate from self.gran (256,
+        # the granularity/multiple constraint) - never enforced here before.
+        # Confirmed on real hardware: starting at k=1 (a 256-sample
+        # waveform) satisfies the granularity rule and, for some
+        # frequencies (e.g. 500MHz), also the sample-rate bounds below -
+        # so the loop returned immediately without ever growing past 256,
+        # and the instrument rejected the upload outright ("invalid
+        # segment length 256", since 256 < minLen). Starting from the
+        # smallest k that already clears minLen fixes this without
+        # touching the rate-matching search itself.
+        k = math.ceil(self.minLen / self.gran)  # number of granularities of data
         n_per = 1 #number of periods of sine
         for id_iter in range(max_iterations):
             #round to kSa/s (limit of AWG)

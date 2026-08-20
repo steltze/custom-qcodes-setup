@@ -183,6 +183,32 @@ class KeysightP5024A(KeysightPNAxBase):
                 self.averages_enabled(True)
                 self.averages(n_avg)
 
+    def _create_trace(self, name: str, sparam: str) -> KeysightPNATrace:
+        """Create a new trace via `CALCulate1:PARameter:DEFine:EXTended`
+        instead of the native driver's `add_trace()` (`DISP:TRAC:NEW 0`).
+
+        Confirmed on real hardware: `add_trace()` raises `RuntimeError:
+        Failed to add PNA trace` on this P5024A - `DISP:TRAC:NEW 0` simply
+        doesn't grow the trace catalog on this Streamline unit's firmware,
+        despite the "same firmware as the PNA family" assumption in this
+        class's docstring. `CALCulate<ch>:PARameter:DEFine:EXTended` is
+        the mechanism `instruments_old/exopy_hqc_legacy/drivers/visa/
+        agilent_pna.py::AgilentPNAChannel.create_meas` used - proven on
+        this exact lab's hardware by every pre-migration script - so this
+        reproduces that instead of the native driver's approach. Channel
+        hardcoded to 1, matching every other call site in this driver
+        (single implicit channel - see `power_slope`).
+
+        `name` is the caller's own label (e.g. 'Sig1Sig1'), not an
+        auto-generated one - same convention `create_meas(meas_name,
+        param)` used, naming the SCPI measurement directly after the
+        label instead of a synthetic name."""
+        self.write(f"CALCulate1:PARameter:DEFine:EXTended '{name}', '{sparam}'")
+        for trace in self.traces:
+            if trace.trace_name == name:
+                return trace
+        raise RuntimeError(f"Failed to add PNA trace {name!r} ({sparam})")
+
     def configure_measurements(
         self, measurements: tuple[tuple[str, str], ...]
     ) -> None:
@@ -195,16 +221,14 @@ class KeysightP5024A(KeysightPNAxBase):
 
         Reuses whatever traces already exist on the instrument (at least
         one, from `reset_config()`'s preset) for the first N labels before
-        calling `add_trace()` for the rest, and deletes any left over -
+        calling `_create_trace()` for the rest, and deletes any left over -
         rather than deleting everything first and adding N fresh ones,
-        which would momentarily leave the instrument with zero traces
-        (a state the native driver's own `add_trace()`/`traces` machinery
-        can't recover from)."""
+        which would momentarily leave the instrument with zero traces."""
         self._traces_by_label = {}
         self.write("DISPlay:WINDow1 ON")
         available = list(self.traces)
         for trace_num, (label, sparam) in enumerate(measurements, start=1):
-            trace = available.pop(0) if available else self.add_trace()
+            trace = available.pop(0) if available else self._create_trace(label, sparam)
             trace.trace(sparam)
             self._traces_by_label[label] = trace
             self.write(
