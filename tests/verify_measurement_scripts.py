@@ -31,6 +31,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import struct
 import sys
 import tempfile
 import time
@@ -85,6 +86,9 @@ class FakePNAResource:
         self._averages_enabled = False
         self._averages = 1
         self._group_trigger_count = 1
+        # KeysightPNABase.__init__ itself sends "FORM REAL,32" at connect
+        # time (see N52xx.py) - match that as the starting state.
+        self._data_format = "REAL,32"
 
     # -- trace bookkeeping ---------------------------------------------
     def _make_trace(self, sparam: str) -> dict:
@@ -118,8 +122,18 @@ class FakePNAResource:
             return
         if low == "syst:preset":
             return
-        if low.startswith("form"):
-            return  # FORM REAL,64 / FORM:BORD NORM - display/precision only
+        if low.startswith("form:bord"):
+            return  # byte-order sub-command - not tracked separately
+        if low.startswith("form "):
+            # e.g. "FORM REAL,32" / "FORM REAL,64" / "FORM ASC,0" - tracked
+            # for real, not ignored: query_binary_values() below actually
+            # encodes according to this, so a script that sets one FORM but
+            # reads back assuming another gets genuinely corrupted data,
+            # same as it would on real hardware (this is exactly the class
+            # of bug that shipped once already - see KeysightP5024A
+            # .reset_config's NOTE on REAL,32 vs REAL,64).
+            self._data_format = cmd.split(None, 1)[1].strip().upper()
+            return
         if low.startswith("outp"):
             self._output = cmd.split()[-1].strip().upper() in ("1", "ON")
             return
@@ -247,7 +261,25 @@ class FakePNAResource:
         for i in range(n):
             values.append(float(seed + i))       # real part
             values.append(float(-seed - i * 0.5))  # imaginary part
-        return container(values) if container is not list else values
+
+        # Actually round-trip through real byte packing according to
+        # whatever FORM is currently set on the (fake) instrument, then
+        # unpack with whatever `datatype` the caller asked for - if those
+        # disagree (e.g. instrument sends REAL,64 doubles but the caller
+        # reads them as 4-byte floats), this produces genuinely
+        # byte-misaligned garbage, same as it would on real hardware,
+        # instead of silently handing back the right numbers regardless
+        # of what was actually requested.
+        instrument_dtype = {"REAL,32": "f", "REAL,64": "d"}.get(self._data_format)
+        if instrument_dtype is None:
+            raise ValueError(
+                f"FakePNAResource: binary query while FORM={self._data_format!r} "
+                "(only REAL,32/REAL,64 are simulated)"
+            )
+        endian = ">" if is_big_endian else "<"
+        packed = struct.pack(f"{endian}{len(values)}{instrument_dtype}", *values)
+        unpacked = [v[0] for v in struct.iter_unpack(f"{endian}{datatype}", packed)]
+        return container(unpacked) if container is not list else unpacked
 
     def close(self) -> None:
         pass

@@ -223,3 +223,4 @@ main.py
 exopy_hqc_legacy/
 *.db
 *.h5
+data/

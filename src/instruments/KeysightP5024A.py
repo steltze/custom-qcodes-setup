@@ -121,18 +121,33 @@ class KeysightP5024A(KeysightPNAxBase):
         place - deleting *every* trace here would leave `configure_
         measurements()`'s `add_trace()` calls with no baseline trace to
         diff against, which the native driver's `add_trace()` can't
-        recover from), then turns output on, widens data precision to
-        REAL,64 (needed for accurate frequency data - see
-        `instruments_old/exopy_hqc_legacy/drivers/visa/agilent_pna.py
-        ::AgilentPNA.data_format`), and disables `auto_sweep` so reading
-        out several named traces after one `run_averaging()` doesn't
-        silently re-trigger a full sweep per trace (see `read_raw_data`).
-        Matches `VNA_P5024A.reset_config`."""
+        recover from), then turns output on and disables `auto_sweep` so
+        reading out several named traces after one `run_averaging()`
+        doesn't silently re-trigger a full sweep per trace (see
+        `read_raw_data`). Matches `VNA_P5024A.reset_config`.
+
+        NOTE: explicitly (re-)sets REAL,32 data precision - confirmed on
+        real hardware to matter: `read_raw_data`/`read_freq_data` go
+        through the native driver's `.polar()`/`frequency_axis`, and
+        `FormattedSweep.get_raw()` (in qcodes' own N52xx.py) hardcodes
+        `query_binary_values(..., datatype="f")` - 4-byte floats,
+        unconditionally, regardless of what FORM is actually set on the
+        instrument. An earlier version of this method set REAL,64 here
+        (copying `instruments_old`'s rationale, which doesn't apply - that
+        driver read frequency data via its own raw SCPI query with a
+        matching datatype="d", but `read_freq_data` here never queries
+        the instrument at all, it computes `frequency_axis` locally from
+        start/stop/points), which corrupted every `.polar()` read on real
+        hardware: an 8-byte-double reply parsed 4 bytes at a time comes
+        out byte-misaligned - silently wrong values and double the
+        expected element count, not an error. `KeysightPNABase.__init__`
+        already sets REAL,32 once at connect time; this just makes it
+        explicit and resilient to `SYST:PRESet` above having changed it."""
         self.write("SYST:PRESet")
         time.sleep(1.0)  # let the PNA settle before further SCPI - VERIFY
         self._traces_by_label = {}
         self.output(True)
-        self.write("FORM REAL,64")
+        self.write("FORM REAL,32")
         self.auto_sweep(False)
 
     def configure(self, config: dict[str, Any]) -> None:

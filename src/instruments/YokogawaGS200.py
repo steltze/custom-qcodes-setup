@@ -57,6 +57,18 @@ class YokogawaGS200(_NativeYokogawaGS200):
         config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        # The native driver hardcodes `default_terminator = "\n"` (LF
+        # only). Confirmed on real hardware: this GS200 terminates its
+        # replies with CR+LF, so an LF-only read strips just the "\n" and
+        # leaves a trailing "\r" stuck on every parsed value (e.g.
+        # `source_mode()` returning "CURR\r") - invisible for plain
+        # writes/one-off reads, but breaks the native driver's own
+        # internal `_assert_mode()` strict-equality check the moment
+        # anything (e.g. `current_range()`) is read back as a getter,
+        # which is exactly the code path the old scripts never exercised
+        # (they only ever *set* this instrument's properties). Overridable
+        # via `terminator=...` if a different setup needs something else.
+        kwargs.setdefault("terminator", "\r\n")
         super().__init__(name, address, **kwargs)
         self._visa_address = address
         self._config = dict(config) if config else {}

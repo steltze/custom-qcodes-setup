@@ -19,7 +19,7 @@ from typing import Any
 
 from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
-from qcodes.validators import Enum, Numbers
+from qcodes.validators import Bool, Enum, Numbers
 
 from instruments_old.awg_M8195A import AWG_M8195A
 
@@ -107,6 +107,24 @@ class KeysightM8195A(Instrument):
                 get_cmd=lambda ch=ch: getattr(self._legacy, f"amp{ch}"),
                 set_cmd=lambda v, ch=ch: self._legacy.configure(**{f"amp{ch}": v}),
                 vals=Numbers(0.075, 1.0),
+            )
+
+            # pyarbtools' play()/stop() (below) are write-only - they issue
+            # `OUTPUT<ch> ON/OFF` but never read it back, so there was no
+            # way to check a channel's actual output state. This queries
+            # the same thing directly, bypassing pyarbtools (it has no
+            # getter for this at all) via self._legacy's raw query/write -
+            # same pattern as ask_if_done() below. `OUTPUT<ch>?` per the
+            # M8195A/M8190A SCPI command set - VERIFY against real
+            # hardware if this doesn't match (the write form is already
+            # confirmed working, since play()/stop() use the identical
+            # `OUTPUT<ch> ON/OFF` write).
+            self.add_parameter(
+                f"output_enabled_{ch}",
+                label=f"Ch{ch} output enabled",
+                get_cmd=lambda ch=ch: self._legacy.query(f"OUTPUT{ch}?").strip() in ("1", "ON"),
+                set_cmd=lambda v, ch=ch: self._legacy.write(f"OUTPUT{ch} {'ON' if v else 'OFF'}"),
+                vals=Bool(),
             )
 
     def get_idn(self) -> dict[str, str | None]:

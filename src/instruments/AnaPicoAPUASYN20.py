@@ -63,7 +63,14 @@ class AnaPicoAPUASYN20(Instrument):
             unit="dBm",
             get_cmd=lambda: self._chan.power,
             set_cmd=lambda v: setattr(self._chan, "power", v),
-            vals=Numbers(),
+            # Confirmed on real hardware: an out-of-range set (e.g. -20
+            # dBm) isn't rejected with a clear error, it's silently
+            # ignored - the write has no effect and the channel is left
+            # at whatever it was, which the legacy driver's write-then-
+            # verify check then reports as the confusing
+            # "Instrument did not set correctly the power". Bounding it
+            # here fails fast instead.
+            vals=Numbers(min_value=-10.0, max_value=23.0),
         )
 
         self.phase: Parameter = self.add_parameter(

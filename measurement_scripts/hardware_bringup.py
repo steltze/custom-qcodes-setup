@@ -46,7 +46,7 @@ import h5py
 import numpy as np
 from qcodes.dataset import experiments, initialise_or_create_database_at
 
-from instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20
+from instruments.AnaPicoAPUASYN20X import AnaPicoAPUASYN20X
 from instruments.KeysightM8195A import KeysightM8195A
 from instruments.KeysightP5024A import KeysightP5024A
 from instruments.YokogawaGS200 import YokogawaGS200
@@ -228,26 +228,47 @@ awg.close()
 print("AWG closed.")
 
 # %% [markdown]
-# # 4. Anapico (AnaPicoAPUASYN20)
+# # 4. Anapico (AnaPicoAPUASYN20X - 4 channels)
+#
+# `outputs` defaults to all-off in `config` below, same "starts safe" pattern
+# as the VNA/Yoko sections - nothing turns RF on until the explicit SAFETY
+# cell.
 
 # %%
-pico = AnaPicoAPUASYN20("pico_bringup", ANAPICO_ADDRESS, config={"frequencies": (5e9,), "powers": (-20.0,)})
+pico = AnaPicoAPUASYN20X(
+    "pico_bringup",
+    ANAPICO_ADDRESS,
+    config={
+        "frequencies": (5e9, 5e9, 5e9, 5e9),
+        # -10.0 dBm, not -20.0 - confirmed on real hardware this
+        # channel's power floor is -10 dBm (range -10..+23 dBm); -20.0
+        # is silently ignored by the instrument, not rejected, so it's
+        # worth getting this one right rather than relying on the
+        # power_N parameters' vals= bounds to catch it (this config dict
+        # is applied straight through the legacy Anapico4 driver at
+        # construction time, bypassing those bounds entirely).
+        "powers": (-10.0, -10.0, -10.0, -10.0),
+        "outputs": ("OFF", "OFF", "OFF", "OFF"),
+    },
+)
 print(pico.get_idn())
 
 # %%
-# Read-only.
-print("frequency:", pico.frequency())
-print("power:", pico.power())
-print("output_enabled:", pico.output_enabled())
+# Read-only, all 4 channels at once.
+for ch in (1, 2, 3, 4):
+    print(f"ch{ch}: freq={getattr(pico, f'frequency_{ch}')()} "
+          f"power={getattr(pico, f'power_{ch}')()}")
+print("which_outputs_enabled (should be all False):", pico.which_outputs_enabled())
 print("reference_source:", pico.reference_source())
 
-# %% SAFETY: this turns RF output ON at -20 dBm, 5 GHz. Check the physical
-# setup is ready for that before running this cell.
-pico.output_enabled(True)
-print("output_enabled after set:", pico.output_enabled())
+# %% SAFETY: this turns RF output ON at -10 dBm, 5 GHz, on channel 1 only.
+# Check the physical setup is ready for that before running this cell.
+pico.output_enabled_1(True)
+print("which_outputs_enabled after set:", pico.which_outputs_enabled())
 
 # %%
-pico.output_enabled(False)
+pico.safe_shutdown()
+print("which_outputs_enabled after safe_shutdown (should be all False):", pico.which_outputs_enabled())
 pico.close()
 print("Anapico closed.")
 
@@ -356,7 +377,7 @@ two_tone_meas = TwoToneSpectro(
         "currents": np.array([0.0, 1e-6]),
         "vna_freqs": np.array([5e9, 5e9]),
         "pico_freqs": np.array([4e9, 6e9]),
-        "pico_powers": np.array([-20.0, -20.0]),
+        "pico_powers": np.array([-10.0, -10.0]),  # -10 dBm floor - see Anapico section above
     },
 )
 two_tone_meas.execute()
