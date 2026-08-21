@@ -92,7 +92,10 @@ class FakePNAResource:
 
     # -- trace bookkeeping ---------------------------------------------
     def _make_trace(self, sparam: str) -> dict:
-        trace = {"num": self._next_num, "name": f"CH1_{sparam}_{self._next_num}", "sparam": sparam}
+        return self._make_trace_named(f"CH1_{sparam}_{self._next_num}", sparam)
+
+    def _make_trace_named(self, name: str, sparam: str) -> dict:
+        trace = {"num": self._next_num, "name": name, "sparam": sparam}
         self._next_num += 1
         self._traces.insert(0, trace)  # see add_trace()'s zip-diff note below
         self._active_num = trace["num"]
@@ -187,6 +190,16 @@ class FakePNAResource:
         if low.startswith("calc:par:mod:ext"):
             sparam = cmd.split(None, 1)[1].strip().strip('"')
             self._active_trace()["sparam"] = sparam
+            return
+        if m := re.match(
+            r"calc(?:ulate)?\d*:par(?:ameter)?:def(?:ine)?:ext(?:ended)?\s+'([^']*)'\s*,\s*'([^']*)'",
+            cmd,
+            re.I,
+        ):
+            # KeysightP5024A._create_trace() - confirmed on real hardware
+            # this is what actually creates a trace on this instrument
+            # (add_trace()'s "DISP:TRAC:NEW 0" below does not).
+            self._make_trace_named(m.group(1), m.group(2))
             return
         if low.startswith("calc:par:del:all"):
             self._traces = []
@@ -379,22 +392,39 @@ class FakeM8195AResourceExt:
     """`verify_without_hardware.py`'s `FakeM8195AResource` was built before
     `KeysightM8195A` grew `delete_segment`/`clear_all_wfm`/`stop` - it
     doesn't answer `trace<ch>:del <id>`/`trace<ch>:del:all`. Wrap it rather
-    than duplicate its (already-proven) segment/voltage state tracking."""
+    than duplicate its (already-proven) segment/voltage state tracking.
+
+    Also tracks `outp<ch>:filt:<rate>:scal` (FIR filter scale - see
+    `drivers/keysight_m8195a.py`), which the inner fake predates too, and
+    logs every write so a test can assert on the exact sequence of
+    amplitude/fir_scale commands sent per sweep point (same `write_log`
+    pattern as `FakeYokogawaResource` above)."""
 
     def __init__(self) -> None:
         from verify_without_hardware import FakeM8195AResource
 
         self._inner = FakeM8195AResource()
+        self._fir_scale = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
+        self.write_log: list[str] = []
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
     def write(self, cmd: str) -> None:
-        if "del" in cmd.strip().lower():
+        cmd = cmd.strip()
+        self.write_log.append(cmd)
+        low = cmd.lower()
+        if m := re.match(r"outp(\d):filt:\w+:scal ([\-0-9.eE]+)", low):
+            self._fir_scale[int(m.group(1))] = float(m.group(2))
+            return
+        if "del" in low:
             return  # trace<ch>:del <id> / trace<ch>:del:all
         self._inner.write(cmd)
 
     def query(self, cmd: str) -> str:
+        low = cmd.strip().lower()
+        if m := re.match(r"outp(\d):filt:\w+:scal\?", low):
+            return str(self._fir_scale[int(m.group(1))])
         return self._inner.query(cmd)
 
     def write_binary_values(self, *a, **kw):
@@ -673,7 +703,7 @@ def main() -> None:
         print("TwoToneSpectro QCoDeS .db run: PASS")
 
     # -- full SpectroAWGPumpSweep... script, db + h5 export, incl. the ------
-    # -- sub-75mV "skip" path --------------------------------------------
+    # -- sub-75mV FIR-compensation path ------------------------------------
     from measurement_scripts.spectro_awgPump_sweep_variable_ranges_simpNOCompOnly_powSlope_sweep_flux import (
         SpectroAWGPumpSweepFIRSimpNOCompSweepFlux,
     )
@@ -686,7 +716,7 @@ def main() -> None:
 
         vna_address = "TCPIP::169.254.1.3::INSTR"
         yoko_address = "TCPIP::169.254.1.4::INSTR"
-        awg_address = "169.254.1.6"
+        awg_address = "TCPIP0::169.254.1.6::inst0::INSTR"  # full VISA string - instruments_native.KeysightM8195A, not the old bare-IP pyarbtools convention
         vna_params = {
             "visa_address": vna_address,
             "nickname": "platoVNA",
@@ -699,10 +729,11 @@ def main() -> None:
             "config": {"mode": "CURR", "current_value": 0, "current_range": "1 mA", "output": "on"},
         }
         n_current, n_freq, n_main_amp = 2, 2, 3
+        min_amp = 75e-3
         sweep_params = {
             "main_channel": 1,
             "freqs": [5e9, 6e9],
-            "main_amp_starts": [50e-3] * n_freq,  # below the 75mV floor - exercises the skip path
+            "main_amp_starts": [50e-3] * n_freq,  # below the 75mV floor - exercises FIR compensation
             "main_amp_ends": [150e-3] * n_freq,
             "n_main_amp": n_main_amp,
             "power_slope": 1.5,
@@ -711,14 +742,32 @@ def main() -> None:
             "n_current": n_current,
         }
 
+        awg_resource = FakeM8195AResourceExt()
         with (
             patched_visa({vna_address: FakePNAResource(), yoko_address: FakeYokogawaResource()}),
-            patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeM8195AResourceExt)),
+            patch(
+                "pyvisa.ResourceManager",
+                lambda *a, **kw: _FakeResourceManager(lambda: awg_resource),
+            ),
         ):
             meas = SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(
                 save_path, str(circuit_path), vna_params, awg_params, yoko_params, sweep_params
             )
             meas.execute()
+
+        # -- FIR compensation actually happened, in the right sequence -----
+        # One reset in _setup_instruments(), then 3 fir_scale writes per
+        # (current, freq) sub-run (one per amplitude point) x 4 sub-runs.
+        fir_writes = [
+            float(m.group(1))
+            for cmd in awg_resource.write_log
+            if (m := re.match(r"outp1:filt:\w+:scal ([\-0-9.eE]+)", cmd.strip(), re.I))
+        ]
+        expected_fir_scale = [1.0] + [50e-3 / min_amp, 1.0, 1.0] * (n_current * n_freq)
+        assert len(fir_writes) == len(expected_fir_scale), fir_writes
+        for actual, expected in zip(fir_writes, expected_fir_scale):
+            assert abs(actual - expected) < 1e-9, (fir_writes, expected_fir_scale)
+        print("AWG FIR-scale compensation sequence (amplitude/0.075 for sub-floor points): PASS")
 
         n_freq_vna = vna_params["config"]["freq_spec"][2]
         with h5.File(save_path, "r") as f:
@@ -735,14 +784,14 @@ def main() -> None:
                     dset = f["data"]
                     assert dset.shape == (n_main_amp, n_freq_vna, 2, 2)
                     assert dset.dtype == complex
-                    # amp index 0 (50mV) is below the 75mV floor -> skipped -> all zero
-                    assert list(dset.attrs["skipped_main_amp_indices"]) == [0]
-                    assert np.all(dset[0] == 0)
-                    # amp indices 1, 2 (100mV, 150mV) were actually measured
+                    # every requested amplitude is now actually measured -
+                    # none skipped, including the sub-75mV one (index 0)
+                    assert not np.all(dset[0] == 0)
                     assert not np.all(dset[1] == 0)
                     assert not np.all(dset[2] == 0)
                     assert "time" in dset.attrs
-        print("SpectroAWGPumpSweep exported per-(current,freq) .h5 files, incl. skip path: PASS")
+                    assert "skipped_main_amp_indices" not in dset.attrs
+        print("SpectroAWGPumpSweep exported per-(current,freq) .h5 files, none skipped: PASS")
 
         db_path = tmp / "experiments.db"
         from qcodes.dataset import initialise_or_create_database_at
@@ -752,9 +801,9 @@ def main() -> None:
         # one run per (current, freq) pair
         ds = load_by_id(1)
         pdata = ds.get_parameter_data()
-        # 2 of the 3 requested amplitudes actually get measured (1 skipped)
-        assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_main_amp - 1, n_freq_vna)
-        assert json.loads(ds.metadata["skipped_main_amps_below_75mV"]) == [0.05]
+        # all 3 requested amplitudes actually get measured now (0 skipped)
+        assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_main_amp, n_freq_vna)
+        assert "skipped_main_amps_below_75mV" not in ds.metadata
         print("SpectroAWGPumpSweep QCoDeS .db runs: PASS")
 
 

@@ -81,7 +81,17 @@ class FakeM8195AResource:
         raise ValueError(f"FakeM8195AResource: unhandled write {cmd!r}")
 
     def write_binary_values(self, cmd: str, data, datatype: str = "b") -> None:
-        pass
+        # Confirmed on real hardware: the M8195A rejects a waveform
+        # shorter than 1280 samples outright ("invalid segment length"),
+        # a hard minimum separate from the 256-sample granularity -
+        # pyarbtools.instruments.M8195A tracks this as self.minLen but
+        # AWG_M8195A.find_waveform_k_nper didn't enforce it (fixed in
+        # src/instruments_old/awg_M8195A.py). Catch a regression here
+        # instead of shipping it to real hardware again.
+        if len(data) < 1280:
+            raise ValueError(
+                f"FakeM8195AResource: invalid segment length {len(data)} (< 1280)"
+            )
 
     def query(self, cmd: str) -> str:
         low = cmd.strip().lower().rstrip("?")

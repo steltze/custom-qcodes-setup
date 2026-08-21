@@ -210,13 +210,6 @@ print("amplitude_1:", awg.amplitude_1())
 # %% SAFETY: this downloads and plays a low-amplitude (75mV) sine on
 # channel 1. Check the physical setup is ready for that before running this
 # cell.
-#
-# freq must be at least ~500MHz here: AWG_M8195A.find_waveform_k_nper's
-# search (given this instrument's 256-sample granularity and 53.76-65
-# GSa/s valid rate range) doesn't converge for lower frequencies within
-# its 1000-iteration budget - confirmed by direct simulation, not a
-# one-off fluke. Real sweeps in this repo's scripts all use frequencies
-# in the multi-GHz range, so this has never come up before.
 seg_id = awg.send_sine(freq=5e8, phase=0.0, channel=1, amp=SAFE_AWG_AMP)
 awg.ask_if_done()
 print("segment id:", seg_id, "amplitude_1 now:", awg.amplitude_1())
@@ -415,7 +408,7 @@ awg_pump_meas = SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(
     },
     sweep_params={
         "main_channel": 1,
-        "freqs": [5e8],  # AWG's find_waveform_k_nper doesn't converge below ~500MHz - see section 3
+        "freqs": [5e8],
         "main_amp_starts": [SAFE_AWG_AMP],
         "main_amp_ends": [0.1],
         "n_main_amp": 2,
