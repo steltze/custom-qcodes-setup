@@ -1,4 +1,3 @@
-import json
 import sys
 from copy import deepcopy
 from datetime import datetime
@@ -16,7 +15,7 @@ from qcodes.dataset import Measurement
 from qcodes.parameters import Parameter
 from qcodes.station import Station
 
-from instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
+from instruments_native.KeysightM8195A import KeysightM8195A  # noqa: E402
 from instruments.KeysightP5024A import KeysightP5024A  # noqa: E402
 from instruments.YokogawaGS200 import YokogawaGS200  # noqa: E402
 from qcodes_utils.measurement_run import (  # noqa: E402
@@ -47,7 +46,10 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         vna_params:dict('visa_address':str, 'nickname':str, config:dict)
             'measurements' will be overwritten.
         awg_params:dict(
-            'visa_address':str,
+            'visa_address':str,  # full VISA resource string, e.g.
+                                 # 'TCPIP0::<host>::inst0::INSTR' - NOT the
+                                 # bare IP the old pyarbtools-based
+                                 # KeysightM8195A took.
             'nickname':str,
             'config':dict
             )
@@ -61,16 +63,22 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                 )
             )
 
-        NOTE on sub-75mV pump amplitudes: the old script tried to
-        compensate amplitudes below the AWG's 75mV hardware floor via a
-        `fir_scale` config key - that key doesn't exist anywhere in the
-        currently installed pyarbtools/AWG_M8195A driver (`configure()`
-        raises KeyError on it), so that path was already broken. Per
-        explicit instruction, this rewrite simply *skips* any requested
-        amplitude below 75mV (logged into each run's
-        'skipped_main_amps_below_75mV' metadata, and into
-        `data.attrs['skipped_main_amp_indices']` in the exported `.h5`)
-        rather than silently measuring it at the wrong, floored amplitude.
+        NOTE on sub-75mV pump amplitudes: the true original (pre-
+        migration) script compensated amplitudes below the AWG's 75mV
+        hardware floor by holding `amp{main_ch}` at 75mV and scaling the
+        output down further via `fir_scale{main_ch}` (`raw_amp = 75e-3;
+        fir_scale = main_amp / raw_amp` - see git history 840f097). That
+        capability doesn't exist in stock pyarbtools (confirmed against
+        both the currently-installed version and 2023.10.1, the version
+        this lab actually used - neither's `configure()` accepts
+        `fir_scale*`, it's not a real pyarbtools feature), which is why an
+        intermediate rewrite of this script gave up on it and just
+        *skipped* sub-75mV points instead. This version restores the
+        original compensation for real, via `KeysightM8195A`'s
+        `fir_scale_{ch}`/`set_fir_scale` (`drivers/keysight_m8195a.py`,
+        transcribed from a locally-patched pyarbtools fork,
+        `fir_instruments.py` at the repo root, that actually implements
+        it) - every requested amplitude gets measured, none are skipped.
         """
         self.params = sweep_params
         vna_params_mod = deepcopy(vna_params)
@@ -140,7 +148,9 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         self._freq_data = self.vna.read_freq_data()
 
         self._amp_param = getattr(self.pump, f"amplitude_{self.main_ch}")
+        self._fir_scale_param = getattr(self.pump, f"fir_scale_{self.main_ch}")
         self._amp_param(_MIN_AMP)
+        self._fir_scale_param(1.0)
 
     def _setup_qcodes_experiment(self):
         """Open the sqlite .db/experiment new runs get added to, and
@@ -184,7 +194,7 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                 self.yoko.current(current)
                 for id_freq, freq in enumerate(self._pump_freqs):
                     if seg_id_main is not None:
-                        self.pump.delete_segment(seg_id_main, ch=self.main_ch)
+                        self.pump.delete_segment(seg_id_main, channel=self.main_ch)
                     seg_id_main = self.pump.send_sine(freq, 0, self.main_ch, _MIN_AMP)
 
                     file_path = (
@@ -200,15 +210,12 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         point by point as each amplitude is measured - not rebuilt/
         re-read from the db - so a crash mid-sub-run only loses that
         one file's still-unmeasured amplitudes, not the ones already on
-        disk. Amplitudes skipped for being below the 75mV floor are left
-        as zero rows, flagged in `data.attrs['skipped_main_amp_indices']`
-        rather than silently indistinguishable from a real all-zero
-        measurement."""
+        disk. Every requested amplitude is actually measured now (see
+        `_measure_one_point`'s FIR compensation for anything below the
+        75mV floor - class docstring) - none are skipped."""
         n_main_amp = len(requested_amps)
         meas = self._setup_qcodes_run()
         flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 10.0))
-        skipped_values: list[float] = []
-        skipped_indices: list[int] = []
 
         with h5.File(file_path, "w") as file:
             dset = self._setup_h5_dataset(file, n_main_amp)
@@ -218,12 +225,6 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                     datasaver.dataset.add_metadata(key, value)
 
                 for idx, main_amp in enumerate(requested_amps):
-                    if main_amp < _MIN_AMP:
-                        skipped_values.append(float(main_amp))
-                        skipped_indices.append(idx)
-                        bar.update()
-                        continue
-
                     # take measurement
                     trace_data = self._measure_one_point(main_amp, seg_id_main)
 
@@ -238,18 +239,27 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                         file.flush()
                         datasaver.flush_data_to_database(block=False)
 
-                datasaver.dataset.add_metadata(
-                    "skipped_main_amps_below_75mV", json.dumps(skipped_values)
-                )
-
-            dset.attrs["skipped_main_amp_indices"] = np.array(skipped_indices, dtype=int)
             file.flush()
 
     def _measure_one_point(self, main_amp, seg_id_main):
         """Set the pump amplitude, play it, and read back the VNA trace
         for every configured measurement. Only talks to
-        `self.pump`/`self.vna` - no qcodes, no h5py."""
-        self._amp_param(main_amp)
+        `self.pump`/`self.vna` - no qcodes, no h5py.
+
+        Amplitudes below the 75mV hardware floor are reached by holding
+        the AWG's `amplitude_{main_ch}` at that floor and scaling the
+        output down further via `fir_scale_{main_ch}` - see class
+        docstring. `set_amplitude`/`set_fir_scale`
+        (`drivers/keysight_m8195a.py`) are single plain SCPI writes, not
+        pyarbtools' `configure()` (which stops every channel on every
+        call) - deliberately avoided here since this runs once per
+        measured point."""
+        if main_amp < _MIN_AMP:
+            raw_amp, fir_scale = _MIN_AMP, main_amp / _MIN_AMP
+        else:
+            raw_amp, fir_scale = main_amp, 1.0
+        self._amp_param(raw_amp)
+        self._fir_scale_param(fir_scale)
         self.pump.play(seg_id_main, self.main_ch)
         self.pump.ask_if_done()
         
