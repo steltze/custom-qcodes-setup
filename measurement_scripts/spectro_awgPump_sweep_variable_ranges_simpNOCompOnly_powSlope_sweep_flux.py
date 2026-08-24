@@ -15,10 +15,10 @@ from qcodes.dataset import Measurement
 from qcodes.parameters import Parameter
 from qcodes.station import Station
 
-from instruments_native.KeysightM8195A import KeysightM8195A  # noqa: E402
-from instruments.KeysightP5024A import KeysightP5024A  # noqa: E402
-from instruments.YokogawaGS200 import YokogawaGS200  # noqa: E402
-from qcodes_utils.measurement_run import (  # noqa: E402
+from native.instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
+from stock_instruments.KeysightP5024A import KeysightP5024A  # noqa: E402
+from stock_instruments.YokogawaGS200 import YokogawaGS200  # noqa: E402
+from .qcodes_utils.measurement_run import (  # noqa: E402
     PeriodicFlush,
     instrument_metadata,
     open_experiment,
@@ -75,7 +75,7 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         intermediate rewrite of this script gave up on it and just
         *skipped* sub-75mV points instead. This version restores the
         original compensation for real, via `KeysightM8195A`'s
-        `fir_scale_{ch}`/`set_fir_scale` (`drivers/keysight_m8195a.py`,
+        `fir_scale_{ch}`/`set_fir_scale` (`native/drivers/keysight_m8195a.py`,
         transcribed from a locally-patched pyarbtools fork,
         `fir_instruments.py` at the repo root, that actually implements
         it) - every requested amplitude gets measured, none are skipped.
@@ -250,7 +250,7 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         the AWG's `amplitude_{main_ch}` at that floor and scaling the
         output down further via `fir_scale_{main_ch}` - see class
         docstring. `set_amplitude`/`set_fir_scale`
-        (`drivers/keysight_m8195a.py`) are single plain SCPI writes, not
+        (`native/drivers/keysight_m8195a.py`) are single plain SCPI writes, not
         pyarbtools' `configure()` (which stops every channel on every
         call) - deliberately avoided here since this runs once per
         measured point."""

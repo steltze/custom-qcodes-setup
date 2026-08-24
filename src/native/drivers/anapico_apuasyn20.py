@@ -4,7 +4,7 @@ Single-channel, 8 kHz - 20 GHz ultra-agile signal source, SCPI-1999 over
 USB / Gb Ethernet / (optional) GPIB.
 
 Commands below are transcribed from
-`instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py` (the exopy
+`legacy/drivers/exopy_hqc_legacy/drivers/visa/anapico.py` (the exopy
 driver this codebase used previously), not the datasheet. Two details in
 particular came from running that driver against real hardware, not from
 the manual - see git history c1a6ba4/8921cd5 - and are preserved here:
@@ -18,7 +18,7 @@ the manual - see git history c1a6ba4/8921cd5 - and are preserved here:
     Ctrl-C, ...).
 
 For the qcodes-compatible instrument (Station/Measurement/snapshot use),
-see `instruments_native/AnaPicoAPUASYN20.py`, which builds one instrument
+see `native/instruments/AnaPicoAPUASYN20.py`, which builds one instrument
 class out of this class and `qcodes.instrument.Instrument` directly, via
 multiple inheritance - not a wrapper holding this as a separate object.
 This class works completely standalone too.
@@ -34,7 +34,7 @@ from .base import VisaDriver
 class AnaPicoAPUASYN20(VisaDriver):
     """Single-channel Anapico APUASYN20. The `:SOURn:` prefix is accepted
     but optional on this single-channel model - hardcoded to channel 1
-    below, matching `instruments_old/anapico.py::Anapico1`. For the
+    below, matching `legacy/drivers/anapico.py::Anapico1`. For the
     multi-channel APUASYN20-X, see the `-X` driver instead."""
 
     default_terminator = "\n"

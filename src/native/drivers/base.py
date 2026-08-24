@@ -5,14 +5,14 @@ qcodes, exopy, or pyarbtools. Drivers built on `VisaDriver` expose their
 settings as plain `get_x()`/`set_x(value)` methods (not descriptor-based
 properties): a `frequency` data descriptor would collide with qcodes'
 `add_parameter`, which needs to bind its own `Parameter` object to that
-exact attribute name on a merged instance - see `instruments_native/`'s
+exact attribute name on a merged instance - see `native/instruments/`'s
 module docstrings for the full story, including a worse reason this was
 tried and reverted: a `self.frequency = value` written *inside the
 driver's own methods* (e.g. `configure()`/`safe_shutdown()`) would have
 silently stopped reaching the instrument at all once shadowed, with no
 error - plain methods can't have that failure mode.
 
-For qcodes Station/Measurement use, `instruments_native/*.py` builds one
+For qcodes Station/Measurement use, `native/instruments/*.py` builds one
 instrument class per driver via multiple inheritance directly on top of
 the driver class (`class Foo(drivers.foo.Foo, qcodes.instrument.
 Instrument)`) rather than wrapping a driver *instance* inside a separate
@@ -53,7 +53,7 @@ class VisaDriver:
         if not hasattr(self, "_t0"):
             # Already set by qcodes' InstrumentBase.__init__ when this
             # class is merged into a qcodes-native instrument (see
-            # instruments_native/) - that one ran first and is a better
+            # native/instruments/) - that one ran first and is a better
             # start time for connect_message() anyway (it predates this
             # __init__, i.e. the VISA connection itself).
             self._t0 = time.time()
@@ -145,8 +145,8 @@ class VisaDriver:
 
     # -- measurement-harness compatibility -------------------------------------
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape `instruments_old.basic_instrument.BasicInstrument`
-        and every qcodes wrapper in `instruments/` already return
+        """Same shape `legacy.drivers.basic_instrument.BasicInstrument`
+        and every qcodes wrapper class in this repo already return
         (`visa_address`/`nickname`/`config`), so this driver can be handed
         straight to `BaseMeasurement.instruments` / `qcodes_utils.
         measurement_run` helpers, with or without a qcodes wrapper on top.

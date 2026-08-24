@@ -4,9 +4,9 @@
 #
 # Unlike the AWG/Anapico, no legacy wrapper is needed here: QCoDeS ships a
 # fully-featured native `YokogawaGS200` driver that already covers what
-# `instruments_old/Yokogs200.py` hand-rolled (mode switching, ranges,
+# `legacy/drivers/Yokogs200.py` hand-rolled (mode switching, ranges,
 # output, and ramping via `output_level.step`/`.inter_delay` - the exact
-# mechanism `instruments_old/Yokogs200.py::_ramp_source` reimplemented by
+# mechanism `legacy/drivers/Yokogs200.py::_ramp_source` reimplemented by
 # hand). This subclass only adds the same `config`-dict vocabulary the old
 # driver used, so call sites barely change.
 
@@ -38,7 +38,7 @@ def _parse_range(value: float | str) -> float:
 
 class YokogawaGS200(_NativeYokogawaGS200):
     """QCoDeS-native Yokogawa GS200, with the same `config` dict shape
-    `instruments_old/Yokogs200.py` used:
+    `legacy/drivers/Yokogs200.py` used:
         'mode': 'CURR' | 'VOLT'
         'current_value' / 'voltage_value': float
         'current_range' / 'voltage_range': str (e.g. '1 mA', '10 V') or float
@@ -78,7 +78,7 @@ class YokogawaGS200(_NativeYokogawaGS200):
             self.configure(self._config)
 
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        """Same shape as `legacy.drivers.basic_instrument.BasicInstrument
         .get_config_info`, so this instrument can be dropped straight into
         `BaseMeasurement.instruments`."""
         return {
@@ -89,7 +89,7 @@ class YokogawaGS200(_NativeYokogawaGS200):
 
     def reset_config(self) -> None:
         """Safe state: output off. Matches
-        `instruments_old/Yokogs200.py::reset_config`."""
+        `legacy/drivers/Yokogs200.py::reset_config`."""
         self.output("off")
 
     def safe_shutdown(self) -> None:

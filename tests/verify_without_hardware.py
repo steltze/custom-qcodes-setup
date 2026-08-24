@@ -34,8 +34,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20  # noqa: E402
-from instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
+from legacy.instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20  # noqa: E402
+from legacy.instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
 
 
 class FakeM8195AResource:
@@ -86,7 +86,7 @@ class FakeM8195AResource:
         # a hard minimum separate from the 256-sample granularity -
         # pyarbtools.instruments.M8195A tracks this as self.minLen but
         # AWG_M8195A.find_waveform_k_nper didn't enforce it (fixed in
-        # src/instruments_old/awg_M8195A.py). Catch a regression here
+        # src/legacy/drivers/awg_M8195A.py). Catch a regression here
         # instead of shipping it to real hardware again.
         if len(data) < 1280:
             raise ValueError(
@@ -116,7 +116,7 @@ class FakeM8195AResource:
 
 class FakeAnapicoResource:
     """Stand-in for the Anapico's SCPI dialect, transcribed from
-    instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py: per-channel
+    legacy/drivers/exopy_hqc_legacy/drivers/visa/anapico.py: per-channel
     `:SOURn:FREQ/POWER/PHAS`, `:OUTPn?` (get) / `:OUTPUTn ON|OFF` (set),
     and the shared `:SOUR:ROSC:SOUR` / `:SOUR:ROSC:LOCK?`.
     """
@@ -182,7 +182,7 @@ def main() -> None:
     with (
         patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeM8195AResource)),
         patch(
-            "instruments_old.exopy_hqc_legacy.drivers.visa_tools.ResourceManager",
+            "legacy.drivers.exopy_hqc_legacy.drivers.visa_tools.ResourceManager",
             lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource),
         ),
     ):

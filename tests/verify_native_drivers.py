@@ -1,21 +1,21 @@
 """
-Exercise the new, detached-from-qcodes driver package (`drivers/`) and its
-qcodes-compatible instruments (`instruments_native/`), both standalone and
-merged, without touching real hardware. Companion to
+Exercise the new, detached-from-qcodes driver package (`native/drivers/`)
+and its qcodes-compatible instruments (`native/instruments/`), both
+standalone and merged, without touching real hardware. Companion to
 `verify_without_hardware.py`, which covers the still-legacy-plugged
-`instruments/` layer instead - that one is deliberately left alone.
+`legacy/instruments/` layer instead - that one is deliberately left alone.
 
-How: `drivers.anapico_apuasyn20.AnaPicoAPUASYN20` opens its connection
+How: `native.drivers.anapico_apuasyn20.AnaPicoAPUASYN20` opens its connection
 with `pyvisa.ResourceManager().open_resource(address)`, exactly like every
 other pyvisa-based driver in this repo. This monkeypatches that one call
 to return a small hand-rolled fake VISA resource answering the exact SCPI
 dialect transcribed into the driver (see its module docstring and
-`instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py`, which it was
+`legacy/drivers/exopy_hqc_legacy/drivers/visa/anapico.py`, which it was
 transcribed from). Everything above the socket - the driver's own
 get_x()/set_x() methods, and the qcodes Parameters wrapping them in
-`instruments_native.AnaPicoAPUASYN20` - then runs for real.
+`native.instruments.AnaPicoAPUASYN20` - then runs for real.
 
-What this specifically guards against: `instruments_native.
+What this specifically guards against: `native.instruments.
 AnaPicoAPUASYN20` is built via multiple inheritance directly on the raw
 driver class (`class AnaPicoAPUASYN20(_RawAnaPico, Instrument)`), not a
 wrapper holding a separate driver instance - see that module's docstring
@@ -32,7 +32,7 @@ This is a hand-rolled, lighter-weight stand-in for `pyvisa-sim` (a
 YAML-driven VISA simulator, the standard tool for this) - not verified
 against the real instrument's firmware, only against the SCPI dialect
 transcribed from the exopy driver (some of which, in turn, came from
-real-hardware findings - see `drivers/anapico_apuasyn20.py`). A green run
+real-hardware findings - see `native/drivers/anapico_apuasyn20.py`). A green run
 here proves "the Python plumbing is correct", not "the SCPI is correct".
 
 Run with: .venv/bin/python tests/verify_native_drivers.py
@@ -53,7 +53,7 @@ if str(SRC) not in sys.path:
 
 class FakeAnapicoResource:
     """Stand-in for the Anapico's SCPI dialect - see
-    `drivers/anapico_apuasyn20.py`'s module docstring for where each
+    `native/drivers/anapico_apuasyn20.py`'s module docstring for where each
     command came from."""
 
     def __init__(self) -> None:
@@ -110,7 +110,7 @@ class FakeAnapicoResource:
 
 class FakeM8195AResource:
     """Stand-in for the M8195A's SCPI dialect that
-    `drivers.keysight_m8195a.KeysightM8195A` sends - transcribed from the
+    `native.drivers.keysight_m8195a.KeysightM8195A` sends - transcribed from the
     installed `pyarbtools.instruments.M8195A`, see that driver's module
     docstring. State-tracking: a write updates internal state, a query
     reflects it. `trace<ch>:catalog?` is simulated with a single global
@@ -203,7 +203,7 @@ class _FakeResourceManager:
 
 
 def check_standalone_driver() -> None:
-    from drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
+    from native.drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
 
     driver = RawAnaPico("anapico_raw", "TCPIP::169.254.1.2::INSTR")
     driver.set_frequency(2.4e9)
@@ -233,14 +233,14 @@ def check_standalone_driver() -> None:
     assert configured.get_output_enabled() is True
     configured.close()
 
-    print("standalone driver (drivers.anapico_apuasyn20): PASS")
+    print("standalone driver (native.drivers.anapico_apuasyn20): PASS")
 
 
 def check_qcodes_native_instrument() -> None:
     import qcodes.instrument
 
-    from drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
-    from instruments_native.AnaPicoAPUASYN20 import AnaPicoAPUASYN20 as NativeAnaPico
+    from native.drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
+    from native.instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20 as NativeAnaPico
 
     anapico = NativeAnaPico("anapico_native", "TCPIP::169.254.1.3::INSTR")
     assert isinstance(anapico, RawAnaPico), "must be a real instance of the raw driver"
@@ -281,7 +281,7 @@ def check_qcodes_native_instrument() -> None:
     assert configured.output_enabled() is True
     configured.close()
 
-    print("qcodes-native instrument (instruments_native.AnaPicoAPUASYN20): PASS")
+    print("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20): PASS")
 
 
 def check_qcodes_measurement_roundtrip() -> None:
@@ -291,7 +291,7 @@ def check_qcodes_measurement_roundtrip() -> None:
         load_or_create_experiment,
     )
 
-    from instruments_native.AnaPicoAPUASYN20 import AnaPicoAPUASYN20 as NativeAnaPico
+    from native.instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20 as NativeAnaPico
 
     anapico = NativeAnaPico("anapico_meas", "TCPIP::169.254.1.6::INSTR")
     try:
@@ -318,7 +318,7 @@ def check_qcodes_measurement_roundtrip() -> None:
 
 
 def check_standalone_driver_x() -> None:
-    from drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
+    from native.drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
 
     driver = RawAnaPicoX(
         "picox_raw",
@@ -336,14 +336,14 @@ def check_standalone_driver_x() -> None:
     driver.safe_shutdown()
     assert driver.which_outputs_enabled() == {1: False, 2: False, 3: False, 4: False}
     driver.close()
-    print("standalone driver (drivers.anapico_apuasyn20x): PASS")
+    print("standalone driver (native.drivers.anapico_apuasyn20x): PASS")
 
 
 def check_qcodes_native_instrument_x() -> None:
     import qcodes.instrument
 
-    from drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
-    from instruments_native.AnaPicoAPUASYN20X import AnaPicoAPUASYN20X as NativeAnaPicoX
+    from native.drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
+    from native.instruments.AnaPicoAPUASYN20X import AnaPicoAPUASYN20X as NativeAnaPicoX
 
     anapico = NativeAnaPicoX(
         "picox_native",
@@ -370,11 +370,11 @@ def check_qcodes_native_instrument_x() -> None:
     assert anapico.output_enabled_1() is False
     assert anapico.output_enabled_2() is False
     anapico.close()
-    print("qcodes-native instrument (instruments_native.AnaPicoAPUASYN20X): PASS")
+    print("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20X): PASS")
 
 
 def check_standalone_awg_driver() -> None:
-    from drivers.keysight_m8195a import KeysightM8195A as RawAWG
+    from native.drivers.keysight_m8195a import KeysightM8195A as RawAWG
 
     awg = RawAWG("awg_raw", "TCPIP0::169.254.3.1::inst0::INSTR")
     assert awg.get_dac_mode() == "dual"
@@ -393,7 +393,7 @@ def check_standalone_awg_driver() -> None:
     assert awg.get_output_enabled(1) is True, "play() should turn the channel on"
 
     # FIR filter scale / memory mode - not in stock pyarbtools, see
-    # drivers/keysight_m8195a.py's module docstring.
+    # native/drivers/keysight_m8195a.py's module docstring.
     assert awg.get_fir_scale(1) == 1.0
     awg.set_fir_scale(1, 50e-3 / 75e-3)
     assert abs(awg.get_fir_scale(1) - 50e-3 / 75e-3) < 1e-9
@@ -414,14 +414,14 @@ def check_standalone_awg_driver() -> None:
     assert awg.get_output_enabled(1) is False
     assert awg.get_output_enabled(4) is False
     awg.close()
-    print("standalone driver (drivers.keysight_m8195a): PASS")
+    print("standalone driver (native.drivers.keysight_m8195a): PASS")
 
 
 def check_qcodes_native_awg_instrument() -> None:
     import qcodes.instrument
 
-    from drivers.keysight_m8195a import KeysightM8195A as RawAWG
-    from instruments_native.KeysightM8195A import KeysightM8195A as NativeAWG
+    from native.drivers.keysight_m8195a import KeysightM8195A as RawAWG
+    from native.instruments.KeysightM8195A import KeysightM8195A as NativeAWG
 
     awg = NativeAWG("awg_native", "TCPIP0::169.254.3.2::inst0::INSTR")
     assert isinstance(awg, RawAWG)
@@ -449,7 +449,7 @@ def check_qcodes_native_awg_instrument() -> None:
     assert awg.output_enabled_1() is False
     assert awg.output_enabled_4() is False
     awg.close()
-    print("qcodes-native instrument (instruments_native.KeysightM8195A): PASS")
+    print("qcodes-native instrument (native.instruments.KeysightM8195A): PASS")
 
 
 def main() -> None:

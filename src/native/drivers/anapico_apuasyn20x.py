@@ -1,11 +1,11 @@
 """AnaPico APUASYN20-X (4 channels) - raw SCPI over pyvisa, no qcodes or
 exopy dependency.
 
-Sibling of `drivers.anapico_apuasyn20.AnaPicoAPUASYN20` (single-channel) -
+Sibling of `native.drivers.anapico_apuasyn20.AnaPicoAPUASYN20` (single-channel) -
 see that module for the channel-less equivalent of every method below and
 for where the SCPI dialect and the real-hardware notes (power range,
 `SYST:COMM:VXI:RTMO 0`) came from; both are transcribed from the same
-`instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py::
+`legacy/drivers/exopy_hqc_legacy/drivers/visa/anapico.py::
 AnapicoNChannels`/`AnapicoChannel`, which is channel-count-generic.
 
 Channel numbers are 1-indexed throughout (`channel=1..4`), matching every
@@ -14,7 +14,7 @@ other multi-channel instrument in this repo (e.g. `KeysightM8195A`'s
 `:SOUR4:FREQ?`).
 
 For the qcodes-compatible instrument, see
-`instruments_native/AnaPicoAPUASYN20X.py`.
+`native/instruments/AnaPicoAPUASYN20X.py`.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ class AnaPicoAPUASYN20X(VisaDriver):
 
     def set_power(self, channel: int, value: float) -> None:
         # -10..23 dBm confirmed on real hardware for the single-channel
-        # unit (see drivers/anapico_apuasyn20.py) - VERIFY this holds on
+        # unit (see native/drivers/anapico_apuasyn20.py) - VERIFY this holds on
         # all 4 channels of your -X unit, not just channel 1.
         if not (-10.0 <= value <= 23.0):
             raise ValueError(

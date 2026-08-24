@@ -1,8 +1,8 @@
 """AnaPico APUASYN20-X (4 channels) - qcodes-compatible instrument.
 
-Sibling of `instruments_native/AnaPicoAPUASYN20.py` (single-channel) -
+Sibling of `native/instruments/AnaPicoAPUASYN20.py` (single-channel) -
 see that module's docstring for why this is built via multiple
-inheritance directly on `drivers.anapico_apuasyn20x.AnaPicoAPUASYN20X`
+inheritance directly on `native.drivers.anapico_apuasyn20x.AnaPicoAPUASYN20X`
 (base order, the `name`/`write`/`ask` collisions with plain
 `qcodes.instrument.Instrument`, and the explicit `close()` override),
 rather than a wrapper holding a separate driver object.
@@ -20,13 +20,13 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from qcodes.validators import Bool, Enum, Numbers
 
-from drivers.anapico_apuasyn20x import CHANNELS
-from drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as _RawAnaPicoX
+from native.drivers.anapico_apuasyn20x import CHANNELS
+from native.drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as _RawAnaPicoX
 
 
 class AnaPicoAPUASYN20X(_RawAnaPicoX, Instrument):
     """4-channel Anapico APUASYN20-X, 8 kHz - 20 GHz per channel, as a
-    qcodes instrument. See `drivers.anapico_apuasyn20x.AnaPicoAPUASYN20X`
+    qcodes instrument. See `native.drivers.anapico_apuasyn20x.AnaPicoAPUASYN20X`
     for the underlying SCPI."""
 
     def __init__(
@@ -54,7 +54,7 @@ class AnaPicoAPUASYN20X(_RawAnaPicoX, Instrument):
                 unit="dBm",
                 get_cmd=(lambda ch=ch: self.get_power(ch)),
                 set_cmd=(lambda v, ch=ch: self.set_power(ch, v)),
-                # `set_power` (drivers/anapico_apuasyn20x.py) already
+                # `set_power` (native/drivers/anapico_apuasyn20x.py) already
                 # enforces this range itself - kept visible here too so
                 # it shows up on the qcodes Parameter/snapshot.
                 vals=Numbers(min_value=-10.0, max_value=23.0),

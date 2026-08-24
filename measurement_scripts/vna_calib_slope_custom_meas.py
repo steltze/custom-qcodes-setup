@@ -14,8 +14,8 @@ from qcodes.dataset import Measurement
 from qcodes.parameters import Parameter
 from qcodes.station import Station
 
-from instruments.KeysightP5024A import KeysightP5024A  # noqa: E402
-from qcodes_utils.measurement_run import (  # noqa: E402
+from stock_instruments.KeysightP5024A import KeysightP5024A  # noqa: E402
+from .qcodes_utils.measurement_run import (  # noqa: E402
     instrument_metadata,
     open_experiment,
     safe_run,

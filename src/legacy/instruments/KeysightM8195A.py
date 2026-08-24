@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 #
 # Stopgap wrapper: all hardware I/O is delegated to the proven pyarbtools-
-# based `AWG_M8195A` driver (instruments_old/awg_M8195A.py), held here as
+# based `AWG_M8195A` driver (legacy/drivers/awg_M8195A.py), held here as
 # `self._legacy`. This class only adds a QCoDeS-compatible surface
 # (Parameters, validators, snapshot()) on top of it - in particular it does
 # NOT redo pyarbtools' waveform granularity/padding logic.
@@ -21,7 +21,7 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from qcodes.validators import Bool, Enum, Numbers
 
-from instruments_old.awg_M8195A import AWG_M8195A
+from legacy.drivers.awg_M8195A import AWG_M8195A
 
 class KeysightM8195A(Instrument):
     """
@@ -137,7 +137,7 @@ class KeysightM8195A(Instrument):
         return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        """Same shape as `legacy.drivers.basic_instrument.BasicInstrument
         .get_config_info` - `self._legacy` already implements it (it *is*
         a `BasicInstrument`), just forward to it so this instrument can be
         dropped straight into `BaseMeasurement.instruments`."""

@@ -1,9 +1,9 @@
 """AnaPico APUASYN20 - qcodes-compatible instrument.
 
 One instrument class, built via multiple inheritance directly on top of
-`drivers.anapico_apuasyn20.AnaPicoAPUASYN20` - not a `qcodes.Instrument`
+`native.drivers.anapico_apuasyn20.AnaPicoAPUASYN20` - not a `qcodes.Instrument`
 holding a separate driver object as a delegate (`self._driver = ...`).
-`isinstance(anapico, drivers.anapico_apuasyn20.AnaPicoAPUASYN20)` is True,
+`isinstance(anapico, native.drivers.anapico_apuasyn20.AnaPicoAPUASYN20)` is True,
 so anything that only needs the plain driver surface
 (`get_config_info`/`safe_shutdown`/`close`/`get_x()`/`set_x()`) works
 directly; `isinstance(anapico, qcodes.instrument.Instrument)` is also
@@ -26,7 +26,7 @@ half the job (either the VISA teardown or the qcodes instrument-registry
 teardown, not both).
 
 (Why the driver exposes `get_frequency()`/`set_frequency()` methods
-rather than a `frequency` property: see `drivers/base.py`'s module
+rather than a `frequency` property: see `native/drivers/base.py`'s module
 docstring. In short, a class-level data descriptor of that name anywhere
 in the MRO would intercept `add_parameter`'s attempt to bind
 `self.frequency` to a qcodes `Parameter` on this merged instance - and,
@@ -45,12 +45,12 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from qcodes.validators import Bool, Enum, Numbers
 
-from drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as _RawAnaPico
+from native.drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as _RawAnaPico
 
 
 class AnaPicoAPUASYN20(_RawAnaPico, Instrument):
     """Single-channel Anapico APUASYN20, 8 kHz - 20 GHz, as a qcodes
-    instrument. See `drivers.anapico_apuasyn20.AnaPicoAPUASYN20` for the
+    instrument. See `native.drivers.anapico_apuasyn20.AnaPicoAPUASYN20` for the
     underlying SCPI and the real-hardware notes behind e.g. the power
     range."""
 
@@ -79,7 +79,7 @@ class AnaPicoAPUASYN20(_RawAnaPico, Instrument):
             unit="dBm",
             get_cmd=self.get_power,
             set_cmd=self.set_power,
-            # `set_power` (drivers/anapico_apuasyn20.py) already enforces
+            # `set_power` (native/drivers/anapico_apuasyn20.py) already enforces
             # this range itself - kept visible here too so it shows up on
             # the qcodes Parameter/snapshot.
             vals=Numbers(min_value=-10.0, max_value=23.0),

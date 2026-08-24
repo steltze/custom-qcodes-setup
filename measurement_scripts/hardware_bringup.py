@@ -46,10 +46,10 @@ import h5py
 import numpy as np
 from qcodes.dataset import experiments, initialise_or_create_database_at
 
-from instruments.AnaPicoAPUASYN20X import AnaPicoAPUASYN20X
-from instruments.KeysightM8195A import KeysightM8195A
-from instruments.KeysightP5024A import KeysightP5024A
-from instruments.YokogawaGS200 import YokogawaGS200
+from legacy.instruments.AnaPicoAPUASYN20X import AnaPicoAPUASYN20X
+from legacy.instruments.KeysightM8195A import KeysightM8195A
+from stock_instruments.KeysightP5024A import KeysightP5024A
+from stock_instruments.YokogawaGS200 import YokogawaGS200
 
 BRINGUP_DIR = REPO_ROOT / "data" / "bringup"
 BRINGUP_DIR.mkdir(parents=True, exist_ok=True)

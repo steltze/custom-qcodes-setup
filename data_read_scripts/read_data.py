@@ -2,7 +2,7 @@ from read_data_utils import *
 
 filename = r'\awg_pump_20260820_101822'
 
-data_path = r""
+data_path = r"C:\Users\REDACTED\Documents\Codes\qcodes_migration\custom-qcodes-setup\data\bringup"
 
 data = load_fs_fp_map_data(filename, data_path, save=False)
 data = np.einsum('cpfaij->cpfaji', data)

@@ -23,11 +23,11 @@ class KeysightP5024A(KeysightPNAxBase):
     data). This subclass adds:
 
     - the same ``config`` dict convenience
-      ``instruments_old/vna_P5024A.py::VNA_P5024A`` had, so call sites
+      ``legacy/drivers/vna_P5024A.py::VNA_P5024A`` had, so call sites
       barely change;
     - ``power_slope``/``power_slope_state`` (PNA-specific, confirmed absent
       from the native driver - see
-      ``instruments_old/exopy_hqc_legacy/drivers/visa/agilent_pna.py``);
+      ``legacy/drivers/exopy_hqc_legacy/drivers/visa/agilent_pna.py``);
     - ``configure_measurements``/``read_raw_data``/``run_averaging``, thin
       conveniences on top of the native trace model matching the old
       driver's named-measurement vocabulary (``'Sig1Sig1' -> 'S23'`` etc).
@@ -107,7 +107,7 @@ class KeysightP5024A(KeysightPNAxBase):
         self.configure(self._config)
 
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        """Same shape as `legacy.drivers.basic_instrument.BasicInstrument
         .get_config_info`, so this instrument can be dropped straight into
         `BaseMeasurement.instruments`."""
         return {
@@ -133,7 +133,7 @@ class KeysightP5024A(KeysightPNAxBase):
         `query_binary_values(..., datatype="f")` - 4-byte floats,
         unconditionally, regardless of what FORM is actually set on the
         instrument. An earlier version of this method set REAL,64 here
-        (copying `instruments_old`'s rationale, which doesn't apply - that
+        (copying `legacy.drivers`'s rationale, which doesn't apply - that
         driver read frequency data via its own raw SCPI query with a
         matching datatype="d", but `read_freq_data` here never queries
         the instrument at all, it computes `frequency_axis` locally from
@@ -192,7 +192,7 @@ class KeysightP5024A(KeysightPNAxBase):
         doesn't grow the trace catalog on this Streamline unit's firmware,
         despite the "same firmware as the PNA family" assumption in this
         class's docstring. `CALCulate<ch>:PARameter:DEFine:EXTended` is
-        the mechanism `instruments_old/exopy_hqc_legacy/drivers/visa/
+        the mechanism `legacy/drivers/exopy_hqc_legacy/drivers/visa/
         agilent_pna.py::AgilentPNAChannel.create_meas` used - proven on
         this exact lab's hardware by every pre-migration script - so this
         reproduces that instead of the native driver's approach. Channel

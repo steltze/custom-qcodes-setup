@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -5,6 +7,89 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
+
+from qcodes.dataset import experiments, initialise_or_create_database_at
+from qcodes.dataset.data_set import load_by_id
+
+
+# ---------------------------------------------------------------------------
+# QCoDeS sqlite database reading
+# ---------------------------------------------------------------------------
+def open_database(db_path):
+    """Point qcodes at the sqlite database at `db_path` (created if it
+    doesn't exist yet - same as connecting to any other qcodes database)."""
+    initialise_or_create_database_at(Path(db_path))
+
+
+def list_runs(db_path):
+    """List every run stored in `db_path` as one dict per run - run_id,
+    experiment/sample name, run name, timestamp, completed - so you can see
+    what's actually in a database before loading anything from it."""
+    open_database(db_path)
+    runs = []
+    for exp in experiments():
+        for ds in exp.data_sets():
+            runs.append({
+                "run_id": ds.run_id,
+                "experiment_name": exp.name,
+                "sample_name": exp.sample_name,
+                "name": ds.name,
+                "timestamp": ds.run_timestamp(),
+                "completed": ds.completed,
+            })
+    return runs
+
+
+def load_run(db_path, run_id):
+    """Load one run from `db_path` by its (database-local) `run_id` - see
+    `list_runs` to find it - as a qcodes `DataSet`."""
+    open_database(db_path)
+    return load_by_id(run_id)
+
+
+def load_latest_run(db_path, experiment_name, sample_name=None):
+    """Load the most recently captured run of `experiment_name` from
+    `db_path` as a qcodes `DataSet` - the common case of "give me whatever I
+    last measured under this experiment", without having to know its
+    run_id. Pass `sample_name` too if more than one sample shares that
+    experiment name."""
+    open_database(db_path)
+    matches = [
+        exp for exp in experiments()
+        if exp.name == experiment_name
+        and (sample_name is None or exp.sample_name == sample_name)
+    ]
+    if not matches:
+        raise ValueError(f"no experiment named {experiment_name!r} in {db_path}")
+    latest_exp = matches[-1]
+    data_sets = latest_exp.data_sets()
+    if not data_sets:
+        raise ValueError(f"experiment {experiment_name!r} in {db_path} has no runs")
+    return data_sets[-1]
+
+
+def load_run_dataframe(db_path, run_id=None, experiment_name=None, sample_name=None):
+    """`load_run`/`load_latest_run`, returned as a pandas DataFrame - the
+    quickest way to get a run's data into something you can `.plot()` or
+    slice directly. Pass `run_id`, or `experiment_name` (+ optional
+    `sample_name`) for the latest run of that experiment."""
+    if run_id is not None:
+        dataset = load_run(db_path, run_id)
+    else:
+        dataset = load_latest_run(db_path, experiment_name, sample_name)
+    return dataset.to_pandas_dataframe()
+
+
+def load_run_xarray(db_path, run_id=None, experiment_name=None, sample_name=None):
+    """Same as `load_run_dataframe`, returned as an xarray Dataset instead -
+    convenient for multi-dimensional sweeps, since every setpoint axis stays
+    labeled instead of being flattened into a DataFrame's multi-index."""
+    if run_id is not None:
+        dataset = load_run(db_path, run_id)
+    else:
+        dataset = load_latest_run(db_path, experiment_name, sample_name)
+    return dataset.to_xarray_dataset()
+
 
 def load_fs_fp_map_data(basename, data_path, save=False):
     data = []

@@ -7,7 +7,7 @@ Front Panel's server, or the module's own vxi11/hislip server).
 Every SCPI command and the waveform-download/tiling logic below is
 transcribed from the installed `pyarbtools.instruments.M8195A` /
 `SignalGeneratorBase` (this codebase used to wrap that library directly -
-see `instruments_old/awg_M8195A.py`), plus this lab's own
+see `legacy/drivers/awg_M8195A.py`), plus this lab's own
 `find_waveform_k_nper`/`farey_fraction` sample-rate-matching helpers from
 that same file. In particular:
 
@@ -52,7 +52,7 @@ VISA resource string via `VisaDriver`, matching every other driver in
 this package - e.g. `"TCPIP0::localhost::inst0::INSTR"`.
 
 For the qcodes-compatible instrument, see
-`instruments_native/KeysightM8195A.py`.
+`native/instruments/KeysightM8195A.py`.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def _farey_fraction(
     """Best rational approximation `a/b` (and its Farey neighbor `c/d`) to
     `x`, found by mediant search - used by `send_sine_force_keep_rate` to
     find an exact `(n_per, k)` pair at a *fixed* sample rate. Transcribed
-    from `instruments_old/awg_M8195A.py::farey_fraction`."""
+    from `legacy/drivers/awg_M8195A.py::farey_fraction`."""
     a, b = math.floor(x), 1
     c, d = math.ceil(x), 1
     for _ in range(max_iter):
@@ -382,7 +382,7 @@ class KeysightM8195A(VisaDriver):
         """Find `(k, n_per, rate)` such that a sine of `freq` fits in `k`
         AWG granularities of samples over `n_per` periods, at a sample
         `rate` within `[min_rate, max_rate]`. Transcribed from
-        `instruments_old/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`."""
+        `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`."""
         k = 1
         n_per = 1
         for _ in range(max_iterations):

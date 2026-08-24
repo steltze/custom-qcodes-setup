@@ -395,7 +395,7 @@ class FakeM8195AResourceExt:
     than duplicate its (already-proven) segment/voltage state tracking.
 
     Also tracks `outp<ch>:filt:<rate>:scal` (FIR filter scale - see
-    `drivers/keysight_m8195a.py`), which the inner fake predates too, and
+    `native/drivers/keysight_m8195a.py`), which the inner fake predates too, and
     logs every write so a test can assert on the exact sequence of
     amplitude/fir_scale commands sent per sweep point (same `write_log`
     pattern as `FakeYokogawaResource` above)."""
@@ -432,7 +432,7 @@ class FakeM8195AResourceExt:
 
 
 def _open_p5024a_with_fake(name: str, address: str):
-    from instruments.KeysightP5024A import KeysightP5024A
+    from stock_instruments.KeysightP5024A import KeysightP5024A
 
     with patched_visa({address: FakePNAResource()}):
         return KeysightP5024A(name, address)
@@ -615,7 +615,7 @@ def main() -> None:
     # -- full TwoToneSpectro script, db + h5 export ------------------------
     # AnaPicoAPUASYN20 doesn't go through qcodes' VisaInstrument at all - it
     # wraps the exopy-legacy Anapico1 driver, which opens its own
-    # connection via instruments_old.exopy_hqc_legacy.drivers.visa_tools
+    # connection via legacy.drivers.exopy_hqc_legacy.drivers.visa_tools
     # .ResourceManager. Reuse the exact fake already built and verified for
     # that dialect in verify_without_hardware.py rather than duplicating it.
     from verify_without_hardware import FakeAnapicoResource, _FakeResourceManager
@@ -662,7 +662,7 @@ def main() -> None:
         with (
             patched_visa({vna_address: FakePNAResource(), yoko_address: FakeYokogawaResource()}),
             patch(
-                "instruments_old.exopy_hqc_legacy.drivers.visa_tools.ResourceManager",
+                "legacy.drivers.exopy_hqc_legacy.drivers.visa_tools.ResourceManager",
                 lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource),
             ),
         ):
@@ -716,7 +716,7 @@ def main() -> None:
 
         vna_address = "TCPIP::169.254.1.3::INSTR"
         yoko_address = "TCPIP::169.254.1.4::INSTR"
-        awg_address = "TCPIP0::169.254.1.6::inst0::INSTR"  # full VISA string - instruments_native.KeysightM8195A, not the old bare-IP pyarbtools convention
+        awg_address = "TCPIP0::169.254.1.6::inst0::INSTR"  # full VISA string - native.instruments.KeysightM8195A, not the old bare-IP pyarbtools convention
         vna_params = {
             "visa_address": vna_address,
             "nickname": "platoVNA",

@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 #
 # Stopgap wrapper: all hardware I/O is delegated to the proven
-# exopy_hqc_legacy-based `Anapico4` driver (instruments_old/anapico.py),
+# exopy_hqc_legacy-based `Anapico4` driver (legacy/drivers/anapico.py),
 # held here as `self._legacy`. This class only adds a QCoDeS-compatible
 # surface (Parameters, validators, snapshot()) on top of it. Sibling of
 # `AnaPicoAPUASYN20` (single-channel) - see that file for the channel-less
@@ -11,7 +11,7 @@
 #
 # To detach from exopy later: pick one parameter, replace its
 # get_cmd/set_cmd with raw SCPI - the exact command strings are already
-# visible in instruments_old/exopy_hqc_legacy/drivers/visa/anapico.py, so
+# visible in legacy/drivers/exopy_hqc_legacy/drivers/visa/anapico.py, so
 # it's mostly transcription once you've verified each one against the
 # manual - and move on to the next. Nothing outside this file needs to
 # change while you do that.
@@ -26,7 +26,7 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from qcodes.validators import Bool, Enum, Numbers
 
-from instruments_old.anapico import Anapico4
+from legacy.drivers.anapico import Anapico4
 
 _CHANNELS = (1, 2, 3, 4)
 
@@ -54,7 +54,7 @@ class AnaPicoAPUASYN20X(Instrument):
 
         # Anapico4.__init__ already applies `config` itself (frequencies/
         # powers/phases/outputs/reference_osc, each a 4-tuple - see
-        # instruments_old/anapico.py::Anapico4.set_config), same
+        # legacy/drivers/anapico.py::Anapico4.set_config), same
         # convention as everywhere else in this repo.
         self._legacy = Anapico4(address, name, config=config)
 
@@ -143,7 +143,7 @@ class AnaPicoAPUASYN20X(Instrument):
         return dict(zip(("vendor", "model", "serial", "firmware"), idparts))
 
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        """Same shape as `legacy.drivers.basic_instrument.BasicInstrument
         .get_config_info` - `self._legacy` already implements it (it *is*
         a `BasicInstrument`), just forward to it so this instrument can be
         dropped straight into `BaseMeasurement.instruments`."""

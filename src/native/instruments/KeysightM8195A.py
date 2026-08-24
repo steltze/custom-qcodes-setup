@@ -1,8 +1,8 @@
 """Keysight M8195A - qcodes-compatible instrument.
 
 One instrument class, built via multiple inheritance directly on top of
-`drivers.keysight_m8195a.KeysightM8195A` - see
-`instruments_native/AnaPicoAPUASYN20.py`'s module docstring for why (base
+`native.drivers.keysight_m8195a.KeysightM8195A` - see
+`native/instruments/AnaPicoAPUASYN20.py`'s module docstring for why (base
 order, the `name`/`write`/`ask` collisions with plain
 `qcodes.instrument.Instrument`, the explicit `close()` override, and why
 the driver exposes plain `get_x()`/`set_x()` methods rather than
@@ -26,13 +26,13 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from qcodes.validators import Bool, Enum, Numbers
 
-from drivers.keysight_m8195a import CHANNELS
-from drivers.keysight_m8195a import KeysightM8195A as _RawM8195A
+from native.drivers.keysight_m8195a import CHANNELS
+from native.drivers.keysight_m8195a import KeysightM8195A as _RawM8195A
 
 
 class KeysightM8195A(_RawM8195A, Instrument):
     """Keysight M8195A 65 GSa/s AWG, as a qcodes instrument. See
-    `drivers.keysight_m8195a.KeysightM8195A` for the underlying SCPI and
+    `native.drivers.keysight_m8195a.KeysightM8195A` for the underlying SCPI and
     waveform-download logic, and its VERIFY-BEFORE-TRUST note - none of
     this has been run against real M8195A hardware yet."""
 

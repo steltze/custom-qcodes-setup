@@ -6,7 +6,7 @@
 # this one talks to the device through Signal Hound's own `sa_api` SDK via
 # ctypes (`saOpenDevice`/`saConfigCenterSpan`/`saGetSweep_32f`/...), not
 # VISA/SCPI - so there is no `visa_address`, and the old exopy driver
-# (instruments_old/exopy_hqc_legacy/drivers/visa/signal_hound_sa124b.py),
+# (legacy/drivers/exopy_hqc_legacy/drivers/visa/signal_hound_sa124b.py),
 # which talked SCPI to Signal Hound's "Spike" software over VISA, has no
 # real overlap with it below the parameter surface. This subclass adds the
 # same `config`-dict convenience the rest of this folder uses, mapped onto
@@ -33,7 +33,7 @@ from qcodes.instrument_drivers.signal_hound.SignalHound_USB_SA124B import (
 
 class SignalHoundSA124B(SignalHoundUSBSA124B):
     """QCoDeS-native Signal Hound SA124B, with the same `config` dict shape
-    `instruments_old/signal_hound.py::SignalHoundSA` used:
+    `legacy/drivers/signal_hound.py::SignalHoundSA` used:
         'frequency': float (Hz) - center frequency
         'span': float (Hz)
         'bandwidth': float (Hz) - mapped to resolution bandwidth (`rbw`);
@@ -81,7 +81,7 @@ class SignalHoundSA124B(SignalHoundUSBSA124B):
             self.configure(config)
 
     def get_config_info(self) -> dict[str, Any]:
-        """Same shape as `instruments_old.basic_instrument.BasicInstrument
+        """Same shape as `legacy.drivers.basic_instrument.BasicInstrument
         .get_config_info` - `visa_address` holds the DLL path here since
         this instrument has no VISA address - so this instrument can be
         dropped straight into `BaseMeasurement.instruments`."""
@@ -122,7 +122,7 @@ class SignalHoundSA124B(SignalHoundUSBSA124B):
 
     def get_trace(self) -> tuple[np.ndarray, np.ndarray]:
         """`(frequencies, power)` for one full sweep - the native-driver
-        equivalent of `instruments_old/signal_hound.py
+        equivalent of `legacy/drivers/signal_hound.py
         ::SignalHoundSA.get_sa_trace`."""
         return self.frequency_axis(), self.trace()
 
