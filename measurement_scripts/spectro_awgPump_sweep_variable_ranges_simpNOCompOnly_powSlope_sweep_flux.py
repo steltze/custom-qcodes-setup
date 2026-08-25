@@ -149,8 +149,12 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
 
         self._amp_param = getattr(self.pump, f"amplitude_{self.main_ch}")
         self._fir_scale_param = getattr(self.pump, f"fir_scale_{self.main_ch}")
+        # Left untouched here on purpose - see _measure_one_point. The AWG
+        # was just *rst (KeysightM8195A(..., reset=True)), so fir_scale is
+        # already at its post-reset default; nothing to set until a point
+        # actually needs compensation.
+        self._fir_scale_engaged = False
         self._amp_param(_MIN_AMP)
-        self._fir_scale_param(1.0)
 
     def _setup_qcodes_experiment(self):
         """Open the sqlite .db/experiment new runs get added to, and
@@ -181,63 +185,84 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
             data_group.create_dataset("DC current (A)", data=self._dc_current)
 
     def _run_sweep(self):
-        """Drive the DC current and pump frequency/segment, delegating
-        each `(current, freq)` pair's amplitude sweep to
-        `_run_one_file`."""
+        """Drive the DC current and pump frequency/segment across the
+        whole sweep, writing every point into one shared qcodes run -
+        current, pump frequency, and pump amplitude all logged as
+        independent parameters (see `_setup_qcodes_run`), the same
+        one-run-per-script pattern `spectro_flux_sweep_slope.py`/
+        `two_tone_spectro.py` use - while `_run_one_file` still writes
+        each `(current, freq)` pair's amplitude sweep into its own
+        legacy-shaped `.h5` file, unchanged. `PeriodicFlush` is shared
+        across the whole sweep too, so a crash anywhere still leaves a
+        valid, partially-filled `.db` (and whichever `.h5` files were
+        already flushed) - the two on-disk artifacts just no longer
+        share the same boundary."""
         seg_id_main = None
         total_loops = len(self._dc_current) * self._n_freq * self._n_main_amp
 
         with safe_run(self.instruments):
             bar = tqdm()
             bar.reset(total=total_loops)
-            for id_current, current in enumerate(self._dc_current):
-                self.yoko.current(current)
-                for id_freq, freq in enumerate(self._pump_freqs):
-                    if seg_id_main is not None:
-                        self.pump.delete_segment(seg_id_main, channel=self.main_ch)
-                    seg_id_main = self.pump.send_sine(freq, 0, self.main_ch, _MIN_AMP)
-
-                    file_path = (
-                        self.save_file_path[:-3] + f"_current{id_current}_freq{id_freq}.h5"
-                    )
-                    self._run_one_file(seg_id_main, self._main_pump_amps[id_freq], bar, file_path)
-            bar.refresh()
-            self.pump.clear_all_wfm()
-
-    def _run_one_file(self, seg_id_main, requested_amps, bar, file_path):
-        """Measure one `(current, freq)` pair's amplitude sweep, writing
-        into its own qcodes run *and* its own legacy-shaped `.h5` file
-        point by point as each amplitude is measured - not rebuilt/
-        re-read from the db - so a crash mid-sub-run only loses that
-        one file's still-unmeasured amplitudes, not the ones already on
-        disk. Every requested amplitude is actually measured now (see
-        `_measure_one_point`'s FIR compensation for anything below the
-        75mV floor - class docstring) - none are skipped."""
-        n_main_amp = len(requested_amps)
-        meas = self._setup_qcodes_run()
-        flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 10.0))
-
-        with h5.File(file_path, "w") as file:
-            dset = self._setup_h5_dataset(file, n_main_amp)
+            meas = self._setup_qcodes_run()
+            flush_gate = PeriodicFlush(interval=self.params.get("flush_interval", 10.0))
 
             with meas.run() as datasaver:
                 for key, value in self._run_metadata.items():
                     datasaver.dataset.add_metadata(key, value)
 
-                for idx, main_amp in enumerate(requested_amps):
-                    # take measurement
-                    trace_data = self._measure_one_point(main_amp, seg_id_main)
+                for id_current, current in enumerate(self._dc_current):
+                    self.yoko.current(current)
+                    for id_freq, freq in enumerate(self._pump_freqs):
+                        if seg_id_main is not None:
+                            self.pump.delete_segment(seg_id_main, channel=self.main_ch)
+                        seg_id_main = self.pump.send_sine(freq, 0, self.main_ch, _MIN_AMP)
 
-                    time_str = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
-                    # old .h5
-                    self._save_point_to_h5(dset, idx, time_str, trace_data)
-                    # qcodes .db
-                    self._save_point_to_db(datasaver, main_amp, time_str, trace_data)
+                        file_path = (
+                            self.save_file_path[:-3] + f"_current{id_current}_freq{id_freq}.h5"
+                        )
+                        self._run_one_file(
+                            seg_id_main,
+                            current,
+                            freq,
+                            self._main_pump_amps[id_freq],
+                            bar,
+                            file_path,
+                            datasaver,
+                            flush_gate,
+                        )
+                bar.refresh()
+                self.pump.clear_all_wfm()
 
-                    bar.update()
-                    if flush_gate.due():
-                        file.flush()
-                        datasaver.flush_data_to_database(block=False)
+    def _run_one_file(
+        self, seg_id_main, current, freq, requested_amps, bar, file_path, datasaver, flush_gate
+    ):
+        """Measure one `(current, freq)` pair's amplitude sweep, writing
+        each point into the shared qcodes run *and* its own legacy-shaped
+        `.h5` file, point by point as each amplitude is measured - not
+        rebuilt/re-read from the db - so a crash mid-sweep only loses
+        this file's still-unmeasured amplitudes, not the ones already on
+        disk. Every requested amplitude is actually measured now (see
+        `_measure_one_point`'s FIR compensation for anything below the
+        75mV floor - class docstring) - none are skipped."""
+        n_main_amp = len(requested_amps)
+
+        with h5.File(file_path, "w") as file:
+            dset = self._setup_h5_dataset(file, n_main_amp)
+
+            for idx, main_amp in enumerate(requested_amps):
+                # take measurement
+                trace_data = self._measure_one_point(main_amp, seg_id_main)
+
+                time_str = datetime.now().strftime("%m/%d/%Y, %H:%M:%S")
+                # old .h5
+                self._save_point_to_h5(dset, idx, time_str, trace_data)
+                # qcodes .db
+                self._save_point_to_db(datasaver, current, freq, main_amp, time_str, trace_data)
+
+                bar.update()
+                if flush_gate.due():
+                    file.flush()
+                    datasaver.flush_data_to_database(block=False)
 
             file.flush()
 
@@ -249,17 +274,25 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         Amplitudes below the 75mV hardware floor are reached by holding
         the AWG's `amplitude_{main_ch}` at that floor and scaling the
         output down further via `fir_scale_{main_ch}` - see class
-        docstring. `set_amplitude`/`set_fir_scale`
-        (`native/drivers/keysight_m8195a.py`) are single plain SCPI writes, not
-        pyarbtools' `configure()` (which stops every channel on every
-        call) - deliberately avoided here since this runs once per
-        measured point."""
+        docstring. `fir_scale` is only ever written for points that
+        actually need it (entering compensation), plus exactly once when
+        the following point no longer does (leaving it) - never on every
+        point. The legacy pyarbtools path never touches this register at
+        all, and confirmed-correct results depend on that: writing it
+        unconditionally on every point (even the mathematically-a-no-op
+        `1.0`) was found to corrupt results on real hardware, not just be
+        redundant - so this only calls `set_fir_scale` on the actual
+        transitions, never as a per-point reset."""
         if main_amp < _MIN_AMP:
-            raw_amp, fir_scale = _MIN_AMP, main_amp / _MIN_AMP
+            self._fir_scale_param(main_amp / _MIN_AMP)
+            self._fir_scale_engaged = True
+            raw_amp = _MIN_AMP
         else:
-            raw_amp, fir_scale = main_amp, 1.0
+            if self._fir_scale_engaged:
+                self._fir_scale_param(1.0)
+                self._fir_scale_engaged = False
+            raw_amp = main_amp
         self._amp_param(raw_amp)
-        self._fir_scale_param(fir_scale)
         self.pump.play(seg_id_main, self.main_ch)
         self.pump.ask_if_done()
         
@@ -270,9 +303,19 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         return trace_data
 
     def _setup_qcodes_run(self):
-        """Register a fresh Measurement + Parameters for one `(current,
-        freq)` sub-run. Sets `self._qc_*`, read by `_save_point_to_db`."""
+        """Register the Measurement + Parameters for the whole sweep -
+        one qcodes run for every `(current, pump_freq, main_amp)` point,
+        not one run per `(current, freq)` pair (that only ever affected
+        the `.h5` side, which still splits that way - see
+        `_run_one_file`). Sets `self._qc_*`, read by
+        `_save_point_to_db`."""
         vna_labels = self._vna_measurement_labels
+        self._qc_current_param = Parameter(
+            "current", label="DC current", unit="A", get_cmd=None, set_cmd=None
+        )
+        self._qc_pump_freq_param = Parameter(
+            "pump_freq", label="Pump frequency", unit="Hz", get_cmd=None, set_cmd=None
+        )
         self._qc_main_amp_param = Parameter(
             "main_amp", label="Pump amplitude", unit="Vpk-pk", get_cmd=None, set_cmd=None
         )
@@ -288,22 +331,33 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
         meas = Measurement(
             name="spectro_awgPump_sweep_flux", exp=self._experiment, station=self._station
         )
+        meas.register_parameter(self._qc_current_param, paramtype="numeric")
+        meas.register_parameter(self._qc_pump_freq_param, paramtype="numeric")
         meas.register_parameter(self._qc_main_amp_param, paramtype="numeric")
         meas.register_parameter(self._qc_freq_param, paramtype="array")
         meas.register_parameter(
-            self._qc_time_param, setpoints=(self._qc_main_amp_param,), paramtype="text"
+            self._qc_time_param,
+            setpoints=(self._qc_current_param, self._qc_pump_freq_param, self._qc_main_amp_param),
+            paramtype="text",
         )
         for param in self._qc_trace_params.values():
             meas.register_parameter(
                 param,
-                setpoints=(self._qc_main_amp_param, self._qc_freq_param),
+                setpoints=(
+                    self._qc_current_param,
+                    self._qc_pump_freq_param,
+                    self._qc_main_amp_param,
+                    self._qc_freq_param,
+                ),
                 paramtype="array",
             )
         return meas
 
-    def _save_point_to_db(self, datasaver, main_amp, time_str, trace_data):
-        """One point -> one row in the qcodes run."""
+    def _save_point_to_db(self, datasaver, current, pump_freq, main_amp, time_str, trace_data):
+        """One point -> one row in the shared qcodes run."""
         datasaver.add_result(
+            (self._qc_current_param, current),
+            (self._qc_pump_freq_param, pump_freq),
             (self._qc_main_amp_param, main_amp),
             (self._qc_freq_param, self._freq_data),
             (self._qc_time_param, time_str),

@@ -2,7 +2,20 @@ import numpy as np
 import math
 
 from .basic_instrument import BasicInstrument
-from pyarbtools.instruments import M8195A
+from .fir_instruments import M8195A  # locally-patched pyarbtools fork with real
+                                      # fir_scale/mem_mode/out_refSrc support for
+                                      # M8195A - stock pyarbtools has none of it
+                                      # (see native/drivers/keysight_m8195a.py's
+                                      # module docstring for how that was confirmed,
+                                      # checking both the currently pip-installed
+                                      # version and 2023.10.1). Also changes
+                                      # gran/minLen from 256/1280 to 128/128 versus
+                                      # stock pyarbtools - that file's own comment
+                                      # flags those as an unverified guess, not
+                                      # confirmed against hardware or the datasheet;
+                                      # it now affects this driver's waveform tiling
+                                      # too (find_waveform_k_nper below), not just
+                                      # the native one.
 from pyarbtools.wfmBuilder import sine_generator
 
 def  farey_fraction(x, max_iter=1000, end_tol=1e-4):
@@ -41,13 +54,14 @@ class AWG_M8195A(BasicInstrument, M8195A):
     """
     
     #default config
-    #NOTE: pyarbtools.instruments.M8195A.configure() (checked against the
-    #pip-installable pyarbtools 2025.06.1) only accepts dacMode, memDiv,
-    #fs, refSrc, refFreq, amp1/2/3/4 and func - it raises KeyError on
-    #anything else. out_refSrc/mem_mode1/mem_mode4 used to be listed here
-    #and made this constructor crash immediately; if your installed
-    #pyarbtools is an older/different version that does support them,
-    #add them back.
+    #NOTE: M8195A.configure() (fir_instruments.py, imported above in place
+    #of stock pyarbtools) accepts dacMode, memDiv, fs, refSrc, refFreq,
+    #out_refSrc, amp1/2/3/4, mem_mode1/2/3/4, fir_scale1/2/3/4, and func -
+    #it raises KeyError on anything else. Not listed in default_config
+    #below since they weren't in the original pre-migration config either
+    #(git history 840f097) - that script set fir_scale/amp per point in
+    #its sweep loop instead of as a static startup default; do the same
+    #rather than fixing them here.
     default_config = {
         'dacMode':'dual',
         'memDiv':1,
@@ -66,6 +80,20 @@ class AWG_M8195A(BasicInstrument, M8195A):
                         protocol="vxi11",
                         port=0,
                         reset=True)
+        # fir_instruments.py's M8195A.__init__ (just ran, above) sets
+        # self.gran/self.minLen to 128/128 - that file's own comment
+        # flags this as "Internal mode is less restrictive? Below are
+        # guessed values", never confirmed. This lab's own real-hardware
+        # testing found the opposite: segments shorter than 1280 samples
+        # are rejected outright ("invalid segment length 256" - see
+        # find_waveform_k_nper's docstring and
+        # FakeM8195AResource.write_binary_values in
+        # tests/verify_without_hardware.py). Override back to the
+        # confirmed-correct values here - take fir_instruments.py's
+        # fir_scale/mem_mode/out_refSrc additions, not its granularity
+        # guess.
+        self.gran = 256
+        self.minLen = 1280
         #Reset already done
         #Call PyArbTools configure() method.
         self.configure(**self.config)

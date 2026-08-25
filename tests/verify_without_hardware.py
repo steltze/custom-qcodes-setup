@@ -39,11 +39,14 @@ from legacy.instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
 
 
 class FakeM8195AResource:
-    """Stand-in for the M8195A's SCPI dialect - only the commands
-    `pyarbtools.instruments.M8195A` actually sends (`inst:dacm`,
-    `frequency:raster`, `func:mode`, `roscillator:source/frequency`,
-    `voltage1..4`, `instrument:memory:extended:rdivider`, plus
-    `*rst`/`*opc?`/`*idn?`/`SYST:ERR?`/waveform trace commands).
+    """Stand-in for the M8195A's SCPI dialect - the commands
+    `legacy.drivers.fir_instruments.M8195A` (a locally-patched pyarbtools
+    fork - see `legacy/drivers/awg_M8195A.py`'s import comment) sends:
+    stock pyarbtools' `inst:dacm`, `frequency:raster`, `func:mode`,
+    `roscillator:source/frequency`, `voltage1..4`,
+    `instrument:memory:extended:rdivider`, plus that fork's additions -
+    `outp:rosc:source`, `trac<ch>:mmod`, `outp<ch>:filt:<rate>:scal` - and
+    `*rst`/`*opc?`/`*idn?`/`SYST:ERR?`/waveform trace commands.
     State-tracking: a write updates internal state, a query reflects it.
     """
 
@@ -55,12 +58,15 @@ class FakeM8195AResource:
             "func:mode": "ARB",
             "roscillator:source": "EXT",
             "roscillator:frequency": "10000000.0",
+            "outp:rosc:source": "INT",
             "voltage1": "1.0",
             "voltage2": "1.0",
             "voltage3": "1.0",
             "voltage4": "1.0",
         }
         self._mem_div = 1
+        self._mem_mode = {1: "EXT", 2: "EXT", 3: "EXT", 4: "EXT"}
+        self._fir_scale = {1: "1.0", 2: "1.0", 3: "1.0", 4: "1.0"}
         self._segment_counter = 0
 
     def write(self, cmd: str) -> None:
@@ -73,6 +79,12 @@ class FakeM8195AResource:
             return
         if low.startswith("instrument:memory:extended:rdivider"):
             self._mem_div = int(low.rsplit("div", 1)[-1])
+            return
+        if m := re.match(r"trac(\d):mmod (int|ext)", low):
+            self._mem_mode[int(m.group(1))] = m.group(2).upper()
+            return
+        if m := re.match(r"outp(\d):filt:\w+:scal ([\-0-9.eE]+)", low):
+            self._fir_scale[int(m.group(1))] = m.group(2)
             return
         for key in self._state:
             if low.startswith(key + " "):
@@ -103,6 +115,10 @@ class FakeM8195AResource:
             return '0,"No error"'
         if low == "instrument:memory:extended:rdivider":
             return f"DIV{self._mem_div}"
+        if m := re.match(r"trac(\d):mmod", low):
+            return self._mem_mode[int(m.group(1))]
+        if m := re.match(r"outp(\d):filt:\w+:scal", low):
+            return self._fir_scale[int(m.group(1))]
         if "catalog" in low:
             self._segment_counter += 1
             return f"seg,{self._segment_counter - 1},end"

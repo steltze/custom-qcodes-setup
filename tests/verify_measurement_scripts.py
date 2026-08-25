@@ -755,19 +755,21 @@ def main() -> None:
             )
             meas.execute()
 
-        # -- FIR compensation actually happened, in the right sequence -----
-        # One reset in _setup_instruments(), then 3 fir_scale writes per
-        # (current, freq) sub-run (one per amplitude point) x 4 sub-runs.
+        # -- FIR compensation actually happened, only on the transitions ---
+        # No write in _setup_instruments() (left untouched on purpose).
+        # Per (current, freq) sub-run - amps [0.05, 0.10, 0.15] - exactly 2
+        # writes: entering compensation at 0.05, leaving it once at 0.10;
+        # 0.15 needs no write at all (already disengaged). x 4 sub-runs.
         fir_writes = [
             float(m.group(1))
             for cmd in awg_resource.write_log
             if (m := re.match(r"outp1:filt:\w+:scal ([\-0-9.eE]+)", cmd.strip(), re.I))
         ]
-        expected_fir_scale = [1.0] + [50e-3 / min_amp, 1.0, 1.0] * (n_current * n_freq)
+        expected_fir_scale = [50e-3 / min_amp, 1.0] * (n_current * n_freq)
         assert len(fir_writes) == len(expected_fir_scale), fir_writes
         for actual, expected in zip(fir_writes, expected_fir_scale):
             assert abs(actual - expected) < 1e-9, (fir_writes, expected_fir_scale)
-        print("AWG FIR-scale compensation sequence (amplitude/0.075 for sub-floor points): PASS")
+        print("AWG FIR-scale compensation sequence (edge-triggered, not per-point): PASS")
 
         n_freq_vna = vna_params["config"]["freq_spec"][2]
         with h5.File(save_path, "r") as f:
@@ -798,13 +800,15 @@ def main() -> None:
         from qcodes.dataset.data_set import load_by_id
 
         initialise_or_create_database_at(db_path)
-        # one run per (current, freq) pair
+        # one shared run for the whole sweep (current, pump_freq, main_amp
+        # all independent params) - not one run per (current, freq) pair;
+        # that split only ever applied to the .h5 side (see above).
         ds = load_by_id(1)
         pdata = ds.get_parameter_data()
         # all 3 requested amplitudes actually get measured now (0 skipped)
-        assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_main_amp, n_freq_vna)
+        assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_current * n_freq * n_main_amp, n_freq_vna)
         assert "skipped_main_amps_below_75mV" not in ds.metadata
-        print("SpectroAWGPumpSweep QCoDeS .db runs: PASS")
+        print("SpectroAWGPumpSweep QCoDeS .db run: PASS")
 
 
 _CRASH_SUBPROCESS_SCRIPT = """

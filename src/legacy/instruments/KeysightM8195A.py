@@ -8,6 +8,13 @@
 # (Parameters, validators, snapshot()) on top of it - in particular it does
 # NOT redo pyarbtools' waveform granularity/padding logic.
 #
+# `AWG_M8195A` now imports its `M8195A` base from `fir_instruments.py`
+# (a locally-patched pyarbtools fork), not stock pyarbtools - see that
+# import's comment in awg_M8195A.py. That's what makes `fir_scale_N`/
+# `mem_mode_N` below possible; without it `configure(fir_scale1=...)`
+# would raise KeyError, same as native.drivers.keysight_m8195a.py's
+# module docstring found true for every real pyarbtools release.
+#
 # To detach from pyarbtools later: pick one parameter, replace its
 # get_cmd/set_cmd with raw SCPI (verified against the M8195A programming
 # guide), and move on to the next. Nothing outside this file needs to
@@ -95,10 +102,9 @@ class KeysightM8195A(Instrument):
         )
 
         # Only channels 1 and 4 are set by AWG_M8195A.default_config (the
-        # pair used in 'dual' DAC mode); pyarbtools itself supports all
-        # four - add amplitude_2/3 the same way if you switch to 'four'
-        # mode. There is no mem_mode1..4 in pyarbtools' configure(); if you
-        # need it, it'll have to be raw SCPI.
+        # pair used in 'dual' DAC mode); the underlying driver itself
+        # supports all four - add amplitude_2/3 (and fir_scale_2/3/
+        # mem_mode_2/3) the same way if you switch to 'four' mode.
         for ch in (1, 4):
             self.add_parameter(
                 f"amplitude_{ch}",
@@ -107,6 +113,28 @@ class KeysightM8195A(Instrument):
                 get_cmd=lambda ch=ch: getattr(self._legacy, f"amp{ch}"),
                 set_cmd=lambda v, ch=ch: self._legacy.configure(**{f"amp{ch}": v}),
                 vals=Numbers(0.075, 1.0),
+            )
+
+            # FIR filter output scale, 0-1 - the datasheet-documented way
+            # to reach output amplitudes below the 75mV `amplitude_N`
+            # floor. Independent of amplitude_N: scales the signal after
+            # the amplitude stage, doesn't replace its own 75mV/1V range
+            # check. See native/drivers/keysight_m8195a.py's module
+            # docstring for the full story on where this came from.
+            self.add_parameter(
+                f"fir_scale_{ch}",
+                label=f"Ch{ch} FIR filter scale",
+                get_cmd=lambda ch=ch: getattr(self._legacy, f"fir_scale{ch}"),
+                set_cmd=lambda v, ch=ch: self._legacy.configure(**{f"fir_scale{ch}": v}),
+                vals=Numbers(0.0, 1.0),
+            )
+
+            self.add_parameter(
+                f"mem_mode_{ch}",
+                label=f"Ch{ch} memory mode",
+                get_cmd=lambda ch=ch: getattr(self._legacy, f"mem_mode{ch}"),
+                set_cmd=lambda v, ch=ch: self._legacy.configure(**{f"mem_mode{ch}": v}),
+                vals=Enum("int", "ext", "INT", "EXT"),
             )
 
             # pyarbtools' play()/stop() (below) are write-only - they issue
