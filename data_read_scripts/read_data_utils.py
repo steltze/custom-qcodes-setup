@@ -4,122 +4,163 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import h5py
-import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
 
 from qcodes.dataset import experiments, initialise_or_create_database_at
 from qcodes.dataset.data_set import load_by_id
 
 
-# ---------------------------------------------------------------------------
-# QCoDeS sqlite database reading
-# ---------------------------------------------------------------------------
-def open_database(db_path):
-    """Point qcodes at the sqlite database at `db_path` (created if it
-    doesn't exist yet - same as connecting to any other qcodes database)."""
-    initialise_or_create_database_at(Path(db_path))
+def _h5_group_to_dict(group):
+    """Recursively turn an h5py Group into a plain nested dict of
+    arrays/scalars, so the metadata survives after the file is closed
+    instead of holding a live h5py handle open."""
+    out = {}
+    for key, item in group.items():
+        out[key] = _h5_group_to_dict(item) if isinstance(item, h5py.Group) else item[()]
+    return out
 
 
-def list_runs(db_path):
-    """List every run stored in `db_path` as one dict per run - run_id,
-    experiment/sample name, run name, timestamp, completed - so you can see
-    what's actually in a database before loading anything from it."""
-    open_database(db_path)
-    runs = []
-    for exp in experiments():
-        for ds in exp.data_sets():
-            runs.append({
-                "run_id": ds.run_id,
-                "experiment_name": exp.name,
-                "sample_name": exp.sample_name,
-                "name": ds.name,
-                "timestamp": ds.run_timestamp(),
-                "completed": ds.completed,
-            })
-    return runs
+class H5DataReader:
+    """Reads .h5 measurement files into arrays/dicts ready to hand to
+    PlotterBase's subclasses (Plot1D / MultiDimPlotter).
 
+    Covers both the per-(current,freq) files a multi-dimensional sweep
+    splits across (see e.g.
+    `measurement_scripts/spectro_awgPump_sweep_variable_ranges_simpNOCompOnly_powSlope_sweep_flux.py`)
+    and the single-file 'metadata' block every `BaseMeasurement` subclass
+    writes (see `measurement_scripts/base_measurement.py`).
+    """
 
-def load_run(db_path, run_id):
-    """Load one run from `db_path` by its (database-local) `run_id` - see
-    `list_runs` to find it - as a qcodes `DataSet`."""
-    open_database(db_path)
-    return load_by_id(run_id)
+    def __init__(self, data_path):
+        self.data_path = data_path
 
-
-def load_latest_run(db_path, experiment_name, sample_name=None):
-    """Load the most recently captured run of `experiment_name` from
-    `db_path` as a qcodes `DataSet` - the common case of "give me whatever I
-    last measured under this experiment", without having to know its
-    run_id. Pass `sample_name` too if more than one sample shares that
-    experiment name."""
-    open_database(db_path)
-    matches = [
-        exp for exp in experiments()
-        if exp.name == experiment_name
-        and (sample_name is None or exp.sample_name == sample_name)
-    ]
-    if not matches:
-        raise ValueError(f"no experiment named {experiment_name!r} in {db_path}")
-    latest_exp = matches[-1]
-    data_sets = latest_exp.data_sets()
-    if not data_sets:
-        raise ValueError(f"experiment {experiment_name!r} in {db_path} has no runs")
-    return data_sets[-1]
-
-
-def load_run_dataframe(db_path, run_id=None, experiment_name=None, sample_name=None):
-    """`load_run`/`load_latest_run`, returned as a pandas DataFrame - the
-    quickest way to get a run's data into something you can `.plot()` or
-    slice directly. Pass `run_id`, or `experiment_name` (+ optional
-    `sample_name`) for the latest run of that experiment."""
-    if run_id is not None:
-        dataset = load_run(db_path, run_id)
-    else:
-        dataset = load_latest_run(db_path, experiment_name, sample_name)
-    return dataset.to_pandas_dataframe()
-
-
-def load_run_xarray(db_path, run_id=None, experiment_name=None, sample_name=None):
-    """Same as `load_run_dataframe`, returned as an xarray Dataset instead -
-    convenient for multi-dimensional sweeps, since every setpoint axis stays
-    labeled instead of being flattened into a DataFrame's multi-index."""
-    if run_id is not None:
-        dataset = load_run(db_path, run_id)
-    else:
-        dataset = load_latest_run(db_path, experiment_name, sample_name)
-    return dataset.to_xarray_dataset()
-
-
-def load_fs_fp_map_data(basename, data_path, save=False):
-    data = []
-    i = 0
-    loop = True
-    while loop:
-        j = 0
-        while True:
-            try:
-                fname = data_path + basename + "_current{}_freq{}.h5".format(i, j)
-                f = h5py.File(fname, 'r')
-                if j == 0:
-                    data += [[]]
-                data[-1] += [np.array(f['data'])]
-                j += 1
-            except FileNotFoundError:
-                if j > 0:
-                    break
-                elif j == 0:
-                    if i > 0:
-                        loop = False
+    def load_fs_fp_map(self, basename, save=False):
+        """Stitch together every `<basename>_current<i>_freq<j>.h5` file
+        into one array, shape (current, pump_freq, signal_freq, pump_amp,
+        Sij)."""
+        data = []
+        i = 0
+        loop = True
+        while loop:
+            j = 0
+            while True:
+                try:
+                    fname = self.data_path + basename + "_current{}_freq{}.h5".format(i, j)
+                    f = h5py.File(fname, 'r')
+                    if j == 0:
+                        data += [[]]
+                    data[-1] += [np.array(f['data'])]
+                    j += 1
+                except FileNotFoundError:
+                    if j > 0:
                         break
-                    elif i == 0:
-                        raise FileNotFoundError(fname)
-        i += 1
-    data = np.array(data)  # shape (current, pump_freq, pump_amp, signal_freq, Sij)
-    data = np.einsum('cijk...->cikj...', data)  # shape (current, pump_freq, signal_freq, pump_amp, Sij)
-    if save:
-        np.save(data_path + basename, data)
-    return data
+                    elif j == 0:
+                        if i > 0:
+                            loop = False
+                            break
+                        elif i == 0:
+                            raise FileNotFoundError(fname)
+            i += 1
+        data = np.array(data)  # shape (current, pump_freq, pump_amp, signal_freq, Sij)
+        data = np.einsum('cijk...->cikj...', data)  # shape (current, pump_freq, signal_freq, pump_amp, Sij)
+        if save:
+            np.save(self.data_path + basename, data)
+        return data
+
+    def read_metadata(self, filename):
+        """Open `filename` and return its 'metadata' group (instrument
+        configs, measurement params, circuit path - see
+        `BaseMeasurement.save_measurement_info`) as a plain nested dict."""
+        with h5py.File(self.data_path + filename, 'r') as f:
+            return _h5_group_to_dict(f['metadata'])
+
+    def read_data(self, filename, dataset='data'):
+        """Open `filename` and return one dataset (default 'data') as a
+        numpy array - the direct path for a single-run .h5 with no
+        per-(current,freq) splitting."""
+        with h5py.File(self.data_path + filename, 'r') as f:
+            return np.array(f[dataset])
+
+
+class QCodesDatabaseReader:
+    """Reads a qcodes sqlite database - the .db file
+    `measurement_scripts/qcodes_utils/measurement_run.py` writes every run
+    into - returning qcodes DataSets/DataFrames/xarray Datasets ready to
+    hand to PlotterBase's subclasses (Plot1D / MultiDimPlotter)."""
+
+    def __init__(self, db_path):
+        self.db_path = Path(db_path)
+        initialise_or_create_database_at(self.db_path)
+
+    def list_runs(self):
+        """List every run in this database as one dict per run - run_id,
+        experiment/sample name, run name, timestamp, completed - so you can
+        see what's actually there before loading anything."""
+        runs = []
+        for exp in experiments():
+            for ds in exp.data_sets():
+                runs.append({
+                    "run_id": ds.run_id,
+                    "experiment_name": exp.name,
+                    "sample_name": exp.sample_name,
+                    "name": ds.name,
+                    "timestamp": ds.run_timestamp(),
+                    "completed": ds.completed,
+                })
+        return runs
+
+    def load_run(self, run_id):
+        """Load one run by its (database-local) `run_id` - see
+        `list_runs` to find it - as a qcodes `DataSet`."""
+        return load_by_id(run_id)
+
+    def load_latest_run(self, experiment_name, sample_name=None):
+        """Load the most recently captured run of `experiment_name` as a
+        qcodes `DataSet` - "give me whatever I last measured under this
+        experiment", without having to know its run_id. Pass `sample_name`
+        too if more than one sample shares that experiment name."""
+        matches = [
+            exp for exp in experiments()
+            if exp.name == experiment_name
+            and (sample_name is None or exp.sample_name == sample_name)
+        ]
+        if not matches:
+            raise ValueError(f"no experiment named {experiment_name!r} in {self.db_path}")
+        latest_exp = matches[-1]
+        data_sets = latest_exp.data_sets()
+        if not data_sets:
+            raise ValueError(f"experiment {experiment_name!r} in {self.db_path} has no runs")
+        return data_sets[-1]
+
+    def load_run_dataframe(self, run_id=None, experiment_name=None, sample_name=None):
+        """`load_run`/`load_latest_run`, returned as a pandas DataFrame -
+        the quickest way to get a run's data into something you can
+        `.plot()` or slice directly. Pass `run_id`, or `experiment_name`
+        (+ optional `sample_name`) for the latest run of that experiment.
+
+        Raises `NotImplementedError` for a run with more than one
+        independent-parameter tree of different shapes - which every
+        multi-instrument sweep in this repo except
+        `vna_calib_slope_custom_meas` is (qcodes can't concat those into
+        one flat DataFrame). For those, use `load_run`/`load_latest_run`
+        directly and call `.get_parameter_data()` on the DataSet instead."""
+        dataset = (
+            self.load_run(run_id) if run_id is not None
+            else self.load_latest_run(experiment_name, sample_name)
+        )
+        return dataset.to_pandas_dataframe()
+
+    def load_run_xarray(self, run_id=None, experiment_name=None, sample_name=None):
+        """Same as `load_run_dataframe`, returned as an xarray Dataset
+        instead - convenient for multi-dimensional sweeps, since every
+        setpoint axis stays labeled instead of being flattened into a
+        DataFrame's multi-index."""
+        dataset = (
+            self.load_run(run_id) if run_id is not None
+            else self.load_latest_run(experiment_name, sample_name)
+        )
+        return dataset.to_xarray_dataset()
+
 
 class PlotterBase:
     """Base class for shared plotter functionality."""
@@ -772,7 +813,16 @@ class MultiDimPlotter(PlotterBase):
                 linestyles=self.linestyles,
                 markers=self.markers
             )
+            # Closing the 1D window destroys its canvas but not this Python
+            # object, so without this the "existing 1D plot" branch above
+            # would keep trying to update/re-raise a dead window forever -
+            # forget it here so the next right-click creates a fresh one.
+            self.plot_1d.fig.canvas.mpl_connect('close_event', self._on_plot_1d_closed)
             plt.show(block=False)  # Display the window without blocking
+
+    def _on_plot_1d_closed(self, event):
+        """Reset the 1D plot reference once its window is closed."""
+        self.plot_1d = None
 
     def _get_slice_data(self, arr):
         """Extract 2D slice from the array based on current axes and slices."""
