@@ -382,8 +382,22 @@ class KeysightM8195A(VisaDriver):
         """Find `(k, n_per, rate)` such that a sine of `freq` fits in `k`
         AWG granularities of samples over `n_per` periods, at a sample
         `rate` within `[min_rate, max_rate]`. Transcribed from
-        `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`."""
-        k = 1
+        `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`.
+
+        Starts `k` at the smallest value that already clears `min_len`
+        samples, not at 1: stock pyarbtools starts at `k=1` (a `gran`-sized,
+        e.g. 256-sample, waveform), which already satisfies the
+        granularity rule and, for some frequencies, the rate bounds below
+        too - so the loop can return before `k` ever grows past 1, well
+        under `min_len` (1280). `download_wfm` declares the segment using
+        this *pre-tiling* length (see its docstring), so a short `k` here
+        means declaring e.g. a 256-sample segment while `_check_wfm`
+        silently tiles the actual written data out to 1280 samples - a
+        length mismatch confirmed on real hardware to make the instrument
+        reject the upload ("invalid segment length 256"). Matches
+        `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`'s
+        fix for this same bug."""
+        k = math.ceil(self.min_len / self.gran)
         n_per = 1
         for _ in range(max_iterations):
             current_rate = 1000 * round(self.gran * freq * k / n_per / 1000)

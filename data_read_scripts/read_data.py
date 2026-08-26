@@ -35,7 +35,7 @@
 
 from read_data_utils import *
 
-filename = r'awg_pump_20260825_113258'
+filename = r'26_08_26_map_fp_fs_left'
 
 data_path = r"/home/REDACTED/Stelios/PPM/Quantic/Qcodes_Migration/custom-qcodes-setup/data/"
 
@@ -110,7 +110,7 @@ print({dependent: {name: arr.shape for name, arr in cols.items()} for dependent,
 # parameters on that one run - so `get_parameter_data()` on it already holds
 # every point; `measurement_params` (the sweep_params this class was
 # constructed with) just tells us the grid shape to reshape it into.
-awg_pump_run_id = 11
+awg_pump_run_id = 12
 full_sweep_run = db_reader.load_run(awg_pump_run_id)
 sweep_params = json.loads(full_sweep_run.metadata["measurement_params"])
 

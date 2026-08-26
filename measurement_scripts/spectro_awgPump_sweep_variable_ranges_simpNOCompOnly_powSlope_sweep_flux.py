@@ -214,7 +214,7 @@ class SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(BaseMeasurement):
                     self.yoko.current(current)
                     for id_freq, freq in enumerate(self._pump_freqs):
                         if seg_id_main is not None:
-                            self.pump.delete_segment(seg_id_main, channel=self.main_ch)
+                            self.pump.delete_segment(seg_id_main, self.main_ch)
                         seg_id_main = self.pump.send_sine(freq, 0, self.main_ch, _MIN_AMP)
 
                         file_path = (

@@ -70,7 +70,7 @@ class AnaPicoAPUASYN20(VisaDriver):
         return float(self.ask(":SOUR1:POWER?"))
 
     def set_power(self, value: float) -> None:
-        if not (-10.0 <= value <= 23.0):  # confirmed on real hardware, see module docstring
+        if not (-10.0 <= value <= 24.0):  # confirmed on real hardware, see module docstring
             raise ValueError(
                 f"power={value!r} outside allowed range [-10.0, 23.0] dBm"
             )
