@@ -237,6 +237,17 @@ class KeysightP5024A(KeysightPNAxBase):
         for leftover in available:
             self.write(f"CALCulate:PARameter:DELete '{leftover.trace_name}'")
         self.write("DISPlay:WINDow1:TRACe:y:COUP:METH WIND")
+        # `self.traces` is a self-refreshing property (re-syncs its
+        # ChannelList, which is also `self.submodules["traces"]`, against
+        # the instrument's live trace catalog on every read) - but nothing
+        # re-reads it after the deletions above, so the just-deleted trace
+        # objects otherwise linger in `submodules["traces"]` until the next
+        # `configure_measurements()` call. A `Station.snapshot()` taken in
+        # that window walks `submodules` directly (not through this
+        # property), hits a trace that no longer exists on the instrument,
+        # and logs "Snapshot: Could not update parameter: trace". Reading
+        # the property once more here closes that window immediately.
+        self.traces
 
     def read_raw_data(self, label: str) -> np.ndarray:
         """Complex raw I/Q data for one named measurement configured via

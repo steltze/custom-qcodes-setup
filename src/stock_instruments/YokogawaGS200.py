@@ -73,6 +73,17 @@ class YokogawaGS200(_NativeYokogawaGS200):
         self._visa_address = address
         self._config = dict(config) if config else {}
 
+        # `program.trigger` (":PROG:TRIG?") belongs to the GS200's separate
+        # program/sequence feature (armed via ":PROG:EDIT:STAR"/":PROG:RUN"),
+        # which nothing here ever uses - this driver only ever sets
+        # current/voltage directly per sweep point. Querying it with no
+        # program ever defined errors on this hardware, which a Station
+        # snapshot taken mid-measurement then surfaces as "Snapshot: Could
+        # not update parameter: trigger". Only exists at all if the GS200
+        # reports the /MON option installed (see YokogawaGS200Program).
+        if hasattr(self.program, "trigger"):
+            self.program.trigger.snapshot_exclude = True
+
         self.reset_config()
         if self._config:
             self.configure(self._config)

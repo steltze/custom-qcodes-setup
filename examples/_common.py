@@ -9,17 +9,26 @@ this directory for the exact bootstrap snippet.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def setup_logging() -> logging.Logger:
-    """Timestamped logging to stdout, so progress is visible in a redirected
-    nohup log file when checked on later."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    """Console + timestamped-file logging via qcodes' own logger
+    (`qcodes.logger.start_all_logging`), redirected from its ~/.qcodes/logs/
+    default to data/logs/ so a run's log sits next to the data it produced.
+    Attaches to the root logger, so every plain `logging.getLogger(__name__)`
+    call elsewhere in this repo is captured too - not just qcodes' own.
+
+    Must run before anything else touches qcodes logging; QCODES_USER_PATH
+    is only read at call time, so setting it here first is enough."""
+    from qcodes.logger import start_all_logging
+
+    os.environ.setdefault("QCODES_USER_PATH", str(REPO_ROOT / "data"))
+    start_all_logging()
     return logging.getLogger(__name__)
 
 
