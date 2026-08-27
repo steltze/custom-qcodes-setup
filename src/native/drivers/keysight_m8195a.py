@@ -40,11 +40,15 @@ after the fact, which adds real FIR-filter-scale control for the M8195A
 (the datasheet-documented way to get output amplitudes below the normal
 75mV DAC floor - see `set_amplitude`, whose own 75mV/1V range check is
 unchanged by this: `fir_scale` is an independent, additional output
-scaling stage, not a replacement for it). Deliberately NOT carried over
-from that same file: its `gran = 128` / `min_len = 128` (down from the
-standard 256/1280) - that file's own comment flags those as "guessed
-values", never confirmed against hardware or the datasheet, so this
-driver keeps the standard 256/1280 pyarbtools values instead.
+scaling stage, not a replacement for it). That same file also carries a
+`gran = 128` / `min_len = 128` pair, flagged in its own comment as
+"guessed values" for internal memory mode - the M8195A datasheet's
+"Waveform Granularity" / "Minimum Waveform Length" tables confirm those
+are exactly right for internal memory (not a guess), while stock
+pyarbtools' 256/1280 is the external-memory, sample-rate-divider=1 case.
+Both are real, datasheet-specified values for different memory modes -
+see `_GRAN_MIN_LEN` below, which covers all six (mem_mode, mem_div)
+combinations rather than hardcoding one.
 
 Connection: unlike `AWG_M8195A` (which builds its own VISA address from a
 bare IP - `tcpip::{ip}::inst0::instr`), this driver takes a normal full
@@ -64,10 +68,22 @@ import numpy as np
 
 from .base import VisaDriver
 
-GRANULARITY = 256
-MIN_LENGTH = 1280
 BIN_MULT = 127
 CHANNELS = (1, 2, 3, 4)
+
+# Waveform granularity / minimum waveform length by (mem_mode, mem_div) -
+# M8195A datasheet, "Sample Memory" section, "Waveform Granularity" /
+# "Minimum Waveform Length" tables. Internal memory's values don't vary
+# with the sample rate divider (the divider only affects external
+# memory).
+_GRAN_MIN_LEN: dict[tuple[str, int], tuple[int, int]] = {
+    ("int", 1): (128, 128),
+    ("int", 2): (128, 128),
+    ("int", 4): (128, 128),
+    ("ext", 1): (256, 1280),
+    ("ext", 2): (128, 640),
+    ("ext", 4): (64, 320),
+}
 
 
 def _wraparound_repeats(length: int, gran: int, min_len: int) -> int:
@@ -114,8 +130,6 @@ class KeysightM8195A(VisaDriver):
     default_terminator = "\n"
     min_rate = 53.76e9
     max_rate = 65e9
-    gran = GRANULARITY
-    min_len = MIN_LENGTH
 
     def __init__(
         self,
@@ -343,21 +357,30 @@ class KeysightM8195A(VisaDriver):
         return self.ask("*OPC?")
 
     # -- waveform handling --------------------------------------------------
-    def _check_wfm(self, wfm_data: np.ndarray) -> np.ndarray:
+    def _gran_min_len(self, channel: int) -> tuple[int, int]:
+        """(gran, min_len) for `channel`'s current memory mode, at the
+        AWG's current sample rate divider - see `_GRAN_MIN_LEN`. Queries
+        the instrument live rather than caching, since either can change
+        via `set_mem_mode`/`set_mem_div` between calls."""
+        mem_mode = self.get_mem_mode(channel).strip().lower()
+        mem_div = self.get_mem_div()
+        return _GRAN_MIN_LEN[(mem_mode, mem_div)]
+
+    def _check_wfm(self, wfm_data: np.ndarray, channel: int) -> np.ndarray:
         """Tile (repeat whole, not zero-pad) `wfm_data` until it's a
-        multiple of `gran` and at least `min_len` samples, then scale to
-        the AWG's signed-8-bit DAC range. Matches pyarbtools'
-        `check_wfm`."""
-        repeats = _wraparound_repeats(len(wfm_data), self.gran, self.min_len)
+        multiple of `channel`'s granularity and at least its minimum
+        length, then scale to the AWG's signed-8-bit DAC range. Matches
+        pyarbtools' `check_wfm`, generalized from a fixed gran/min_len to
+        `_gran_min_len(channel)`."""
+        gran, min_len = self._gran_min_len(channel)
+        repeats = _wraparound_repeats(len(wfm_data), gran, min_len)
         if repeats > 1:
             print(f"Information: Waveform repeated {repeats} times.")
         wfm = np.tile(wfm_data, repeats)
-        if len(wfm) < self.min_len:
-            raise ValueError(
-                f"Waveform length {len(wfm)} must be at least {self.min_len}."
-            )
-        if len(wfm) % self.gran != 0:
-            raise ValueError(f"Waveform must have a granularity of {self.gran}.")
+        if len(wfm) < min_len:
+            raise ValueError(f"Waveform length {len(wfm)} must be at least {min_len}.")
+        if len(wfm) % gran != 0:
+            raise ValueError(f"Waveform must have a granularity of {gran}.")
         return np.array(BIN_MULT * wfm, dtype=np.int8)
 
     def download_wfm(self, wfm_data: np.ndarray, channel: int = 1, name: str = "wfm") -> int:
@@ -366,7 +389,7 @@ class KeysightM8195A(VisaDriver):
         float in [-1, 1]. Matches pyarbtools' `download_wfm` (including
         its `trace<ch>:def` quirk - see module docstring)."""
         self.write("abort")
-        wfm = self._check_wfm(wfm_data)
+        wfm = self._check_wfm(wfm_data, channel)
         length = len(wfm_data)
         segment = int(self.ask(f"trace{channel}:catalog?").strip().split(",")[-2]) + 1
         self.write(f"trace{channel}:def {segment}, {length}")
@@ -377,37 +400,43 @@ class KeysightM8195A(VisaDriver):
         return segment
 
     def find_waveform_k_nper(
-        self, freq: float, max_iterations: int = 1000
-    ) -> tuple[int, int, float]:
-        """Find `(k, n_per, rate)` such that a sine of `freq` fits in `k`
-        AWG granularities of samples over `n_per` periods, at a sample
-        `rate` within `[min_rate, max_rate]`. Transcribed from
+        self, freq: float, channel: int = 1, max_iterations: int = 1000
+    ) -> tuple[int, int, float, int]:
+        """Find `(k, n_per, rate, gran)` such that a sine of `freq` fits in
+        `k` of `channel`'s AWG granularities of samples over `n_per`
+        periods, at a sample `rate` within `[min_rate, max_rate]`.
+        Transcribed from
         `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`.
 
+        `gran`/`min_len` (via `_gran_min_len(channel)`) depend on
+        `channel`'s memory mode and the AWG's sample rate divider - see
+        `_GRAN_MIN_LEN`.
+
         Starts `k` at the smallest value that already clears `min_len`
-        samples, not at 1: stock pyarbtools starts at `k=1` (a `gran`-sized,
-        e.g. 256-sample, waveform), which already satisfies the
-        granularity rule and, for some frequencies, the rate bounds below
-        too - so the loop can return before `k` ever grows past 1, well
-        under `min_len` (1280). `download_wfm` declares the segment using
-        this *pre-tiling* length (see its docstring), so a short `k` here
-        means declaring e.g. a 256-sample segment while `_check_wfm`
-        silently tiles the actual written data out to 1280 samples - a
-        length mismatch confirmed on real hardware to make the instrument
-        reject the upload ("invalid segment length 256"). Matches
+        samples, not at 1: stock pyarbtools starts at `k=1` (a single
+        `gran`-sized waveform), which already satisfies the granularity
+        rule and, for some frequencies, the rate bounds below too - so the
+        loop can return before `k` ever grows past 1, well under
+        `min_len`. `download_wfm` declares the segment using this
+        *pre-tiling* length (see its docstring), so a short `k` here means
+        declaring e.g. a 256-sample segment while `_check_wfm` silently
+        tiles the actual written data out to 1280 samples - a length
+        mismatch confirmed on real hardware to make the instrument reject
+        the upload ("invalid segment length 256"). Matches
         `legacy/drivers/awg_M8195A.py::AWG_M8195A.find_waveform_k_nper`'s
         fix for this same bug."""
-        k = math.ceil(self.min_len / self.gran)
+        gran, min_len = self._gran_min_len(channel)
+        k = math.ceil(min_len / gran)
         n_per = 1
         for _ in range(max_iterations):
-            current_rate = 1000 * round(self.gran * freq * k / n_per / 1000)
+            current_rate = 1000 * round(gran * freq * k / n_per / 1000)
             if current_rate >= self.max_rate:
                 n_per += 1
             elif current_rate <= self.min_rate:
                 k += 1
                 n_per = k + 1
             else:
-                return k, n_per, current_rate
+                return k, n_per, current_rate, gran
         raise RuntimeError(f"Couldn't find k and n_per for freq {freq}Hz.")
 
     def send_sine(
@@ -417,9 +446,9 @@ class KeysightM8195A(VisaDriver):
         and play a sine of `freq` Hz / `phase` rad on `channel`. Changes
         the AWG's sample rate - see `send_sine_keep_rate`/
         `send_sine_force_keep_rate` if that's not acceptable."""
-        k, n_per, rate = self.find_waveform_k_nper(freq)
-        t_points = np.arange(k * self.gran)
-        period = k * self.gran / n_per
+        k, n_per, rate, gran = self.find_waveform_k_nper(freq, channel)
+        t_points = np.arange(k * gran)
+        period = k * gran / n_per
         amp_points = np.sin(2 * np.pi * t_points / period + phase)
         self.set_sample_rate(rate)
         if amp is not None:
@@ -433,15 +462,15 @@ class KeysightM8195A(VisaDriver):
     ) -> int:
         """Like `send_sine`, but raises if `freq` isn't compatible with
         the current sample rate instead of changing it."""
-        k, n_per, rate = self.find_waveform_k_nper(freq)
+        k, n_per, rate, gran = self.find_waveform_k_nper(freq, channel)
         current_rate = self.get_sample_rate()
         if rate != current_rate:
             raise RuntimeError(
                 "Tried to send an additional signal incompatible with the "
                 f"current rate. Current {current_rate}Hz, needed {rate}Hz."
             )
-        t_points = np.arange(k * self.gran)
-        period = k * self.gran / n_per
+        t_points = np.arange(k * gran)
+        period = k * gran / n_per
         amp_points = np.sin(2 * np.pi * t_points / period + phase)
         if amp is not None:
             self.set_amplitude(channel, amp)
@@ -455,10 +484,11 @@ class KeysightM8195A(VisaDriver):
         """Like `send_sine`, but keeps the current sample rate fixed and
         instead lengthens the waveform (Farey-fraction approximation) to
         fit `freq` as closely as possible."""
-        decimal_val = self.gran * freq / self.get_sample_rate()
+        gran, _ = self._gran_min_len(channel)
+        decimal_val = gran * freq / self.get_sample_rate()
         n_per, k, _, _ = _farey_fraction(decimal_val, max_iter=1999, end_tol=1e-6)
-        t_points = np.arange(k * self.gran)
-        period = k * self.gran / n_per
+        t_points = np.arange(k * gran)
+        period = k * gran / n_per
         amp_points = np.sin(2 * np.pi * t_points / period + phase)
         if amp is not None:
             self.set_amplitude(channel, amp)
