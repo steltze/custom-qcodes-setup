@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "custom-qcodes-setup"
+version = "0.1.0"
+description = "Custom QCoDeS instrument drivers and measurement scripts for the lab setup"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "qcodes==0.58.0",
+    "pyvisa==1.16.2",
+    "pyarbtools==2025.6.1",
+    "socketscpi==2025.2.0",
+    "h5py==3.16.0",
+    "matplotlib==3.11.1",
+    "numpy==2.5.2",
+    "tqdm==4.70.0",
+]
+
+[project.optional-dependencies]
+sim = ["PyVISA-sim==0.7.1"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = [
+    "legacy",
+    "legacy.drivers",
+    "legacy.instruments",
+    "native",
+    "native.drivers",
+    "native.instruments",
+    "stock_instruments",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
