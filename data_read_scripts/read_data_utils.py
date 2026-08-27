@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,8 @@ from matplotlib.widgets import Slider, Button
 
 from qcodes.dataset import experiments, initialise_or_create_database_at
 from qcodes.dataset.data_set import load_by_id
+
+logger = logging.getLogger(__name__)
 
 
 def _h5_group_to_dict(group):
@@ -764,7 +767,7 @@ class MultiDimPlotter(PlotterBase):
 
         # If 1D plot exists, update it
         if self.plot_1d is not None:
-            print("existing 1D plot")
+            logger.debug("existing 1D plot")
             # Update all slice indices from the current 2D state
             for i in range(self.ndim):
                 self.plot_1d.slices[i] = self.slices.get(i, 0)
@@ -790,8 +793,7 @@ class MultiDimPlotter(PlotterBase):
                         self.plot_1d.fig.canvas.manager.window.attributes('-topmost', True)
                         self.plot_1d.fig.canvas.manager.window.attributes('-topmost', False)
             except Exception as e:
-                print(f"Could not raise window: {e}")
-                pass
+                logger.warning("Could not raise window: %s", e)
         else:
             # Create new 1D plot with all datasets
             # Initialize slices with current 2D state, then override with click indices

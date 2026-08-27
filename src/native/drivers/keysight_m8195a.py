@@ -61,12 +61,15 @@ For the qcodes-compatible instrument, see
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
 import numpy as np
 
 from .base import VisaDriver
+
+logger = logging.getLogger(__name__)
 
 BIN_MULT = 127
 CHANNELS = (1, 2, 3, 4)
@@ -318,7 +321,7 @@ class KeysightM8195A(VisaDriver):
             raw = self.get_error("SYST:ERR?").strip().replace("+", "").replace("-", "")
             if raw == '0,"No error"':
                 break
-            print(raw)
+            logger.warning("SCPI error: %s", raw)
             errors.append(raw)
         if errors:
             raise RuntimeError(errors)
@@ -375,7 +378,7 @@ class KeysightM8195A(VisaDriver):
         gran, min_len = self._gran_min_len(channel)
         repeats = _wraparound_repeats(len(wfm_data), gran, min_len)
         if repeats > 1:
-            print(f"Information: Waveform repeated {repeats} times.")
+            logger.info("Waveform repeated %d times.", repeats)
         wfm = np.tile(wfm_data, repeats)
         if len(wfm) < min_len:
             raise ValueError(f"Waveform length {len(wfm)} must be at least {min_len}.")

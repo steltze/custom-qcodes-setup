@@ -22,8 +22,11 @@ name-collision details that requires.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class VisaDriver:
@@ -122,11 +125,14 @@ class VisaDriver:
         }
         idn.update(self.get_idn())
         t = time.time() - (begin_time or self._t0)
-        print(
+        con_msg = (
             "Connected to: {vendor} {model} "
             "(serial:{serial}, firmware:{firmware}) "
             "in {t:.2f}s".format(t=t, **idn)
         )
+        # print + log.info, matching qcodes' own Instrument.connect_message
+        print(con_msg)
+        logger.info("Connected to instrument: %s", idn)
 
     # -- error queue ----------------------------------------------------------
     def get_error(self, cmd: str = ":SYST:ERR?") -> str:

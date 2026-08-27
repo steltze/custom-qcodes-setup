@@ -25,6 +25,45 @@ For real hardware, VISA communication also needs a VISA backend on the machine
 (e.g. NI-VISA) or `pyvisa-py`/the `sim` extra (`uv sync --extra sim`) for
 simulated instruments in tests.
 
+## Examples
+
+`examples/` holds runnable, standalone measurement scripts (`vna_calib_slope_meas.py`,
+`spectro_dc_sweep_slope.py`, `two_tone_spectro.py`, `spectro_awg.py`) built on the
+classes in `measurement_scripts/`. Each one:
+
+- fails fast with a clear error if a VISA address placeholder in its CONFIG
+  section was left blank, instead of hanging or failing confusingly once a
+  connection is attempted;
+- logs progress with timestamps (`logging`, not `print`), so a run left
+  unattended shows what happened and when if you check on it later;
+- writes to a fresh, timestamped `.h5` file under `./data`, so repeated runs
+  never collide.
+
+Fill in the VISA addresses at the top of the script you want, then run it.
+
+### Running unattended
+
+To start a measurement and let it keep running after you log out or close
+the terminal:
+
+**Linux:**
+```
+nohup python examples/spectro_awg.py > examples/spectro_awg.out 2>&1 &
+```
+`nohup` stops the process from being killed when the terminal hangs up;
+`&` backgrounds it; the redirect captures the timestamped log output to a
+file you can `tail -f` later.
+
+**Windows (PowerShell)** has no direct `nohup`, but `Start-Process` is the
+equivalent - it detaches the process so it survives the console closing,
+and can redirect output the same way:
+```
+Start-Process -NoNewWindow python -ArgumentList "examples\spectro_awg.py" `
+  -RedirectStandardOutput examples\spectro_awg.out -RedirectStandardError examples\spectro_awg.err
+```
+For something that needs to keep running across a full logout (not just a
+closed terminal), use Task Scheduler (`schtasks /create ...`) instead.
+
 ## Capability matrix
 
 Instruments are covered by either a from-scratch native driver (`src/native/`,

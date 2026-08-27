@@ -24,6 +24,7 @@ Run with: .venv/bin/python tests/verify_without_hardware.py
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from unittest.mock import patch
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+logger = logging.getLogger(__name__)
 
 from legacy.instruments.AnaPicoAPUASYN20 import AnaPicoAPUASYN20  # noqa: E402
 from legacy.instruments.KeysightM8195A import KeysightM8195A  # noqa: E402
@@ -223,7 +226,7 @@ def main() -> None:
         assert isinstance(seg_id, int)
         assert awg.amplitude_1() == 0.8
 
-        print("Parameter and waveform round-trips: PASS")
+        logger.info("Parameter and waveform round-trips: PASS")
 
         # -- save data the way QCoDeS intends -------------------------------
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -254,15 +257,15 @@ def main() -> None:
 
             df = dataset.to_pandas_dataframe()
             assert len(df) == 3
-            print(f"Measurement/datasaver round-trip: PASS ({len(df)} rows written)")
-            print(df)
+            logger.info("Measurement/datasaver round-trip: PASS (%d rows written)", len(df))
+            logger.info("%s", df)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     from qcodes.logger import start_all_logging
 
     start_all_logging()
-
 
     main()

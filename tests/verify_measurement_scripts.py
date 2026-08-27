@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import struct
 import sys
@@ -41,6 +42,8 @@ from unittest.mock import patch
 
 import h5py as h5
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src"
@@ -455,7 +458,7 @@ def main() -> None:
     assert data["Sig1Sig1"].shape == (11,)
     assert data["Sig1Sig1"].dtype == complex
     assert not (data["Sig1Sig1"] == data["Sig2Sig1"]).all()
-    print("KeysightP5024A parameter/trace round-trip: PASS")
+    logger.info("KeysightP5024A parameter/trace round-trip: PASS")
     vna.close()
 
     # -- full VNACalibSlopeCustomMeas script, db + h5 export -------------
@@ -502,7 +505,7 @@ def main() -> None:
                 f["metadata"]["instruments"]["platoVNA"]["visa_address"][()].decode()
                 == vna_params["visa_address"]
             )
-        print("BaseMeasurement metadata block: PASS")
+        logger.info("BaseMeasurement metadata block: PASS")
 
         # -- per-iteration exported files, legacy layout ----------------
         for n_pt in sweep_params["pts_list"]:
@@ -517,7 +520,7 @@ def main() -> None:
                 assert f["data"]["data"].dims[0].label == "Vna frequencies (Hz)"
                 assert f["data"]["data"].dims[1].label == "X in SigXSigY"
                 assert f["data"]["data"].dims[2].label == "Y in SigXSigY"
-        print("Exported per-iteration .h5 files: PASS")
+        logger.info("Exported per-iteration .h5 files: PASS")
 
         # -- qcodes db: one run per (pts, bw) pair, arrays round-trip ----
         db_path = tmp / "experiments.db"
@@ -531,7 +534,7 @@ def main() -> None:
             pdata = ds.get_parameter_data()
             assert pdata["Sig1Sig1"]["Sig1Sig1"].size == n_pt
             assert ds.metadata["n_pts"] == str(n_pt)
-        print("QCoDeS .db runs: PASS")
+        logger.info("QCoDeS .db runs: PASS")
 
     # -- full SpectroDCSweepSlope script, db + h5 export ------------------
     from measurement_scripts.spectro_flux_sweep_slope import SpectroDCSweepSlope
@@ -578,7 +581,7 @@ def main() -> None:
         output_writes = [c for c in yoko_resource.write_log if c.upper().startswith("OUTPUT ")]
         assert output_writes[-1].upper() == "OUTPUT 0", output_writes
         assert output_writes.count("OUTPUT 1") >= 1  # config turned it on for the sweep
-        print("Yokogawa left in a safe (output-off) state after execute(): PASS")
+        logger.info("Yokogawa left in a safe (output-off) state after execute(): PASS")
 
         n_current = sweep_params["n_current"]
         n_freq = vna_params["config"]["freq_spec"][2]
@@ -599,7 +602,7 @@ def main() -> None:
                 assert "Current (mA)" in dset.attrs
                 for i_meas, label in enumerate(vna_meas):
                     assert dset.attrs[f"Data col {i_meas}"] == label
-        print("SpectroDCSweepSlope exported .h5 (single-file, per-current datasets): PASS")
+        logger.info("SpectroDCSweepSlope exported .h5 (single-file, per-current datasets): PASS")
 
         db_path = tmp / "experiments.db"
         from qcodes.dataset import initialise_or_create_database_at
@@ -610,7 +613,7 @@ def main() -> None:
         pdata = ds.get_parameter_data()
         assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_current, n_freq)
         assert "instruments" in ds.metadata
-        print("SpectroDCSweepSlope QCoDeS .db run: PASS")
+        logger.info("SpectroDCSweepSlope QCoDeS .db run: PASS")
 
     # -- full TwoToneSpectro script, db + h5 export ------------------------
     # AnaPicoAPUASYN20 doesn't go through qcodes' VisaInstrument at all - it
@@ -690,7 +693,7 @@ def main() -> None:
             time_dset = data_group["time"]
             assert time_dset.shape == (n_current, n_pico_freq)
             assert all(t for row in time_dset[()] for t in row)
-        print("TwoToneSpectro exported .h5 (single shared 3-D dataset): PASS")
+        logger.info("TwoToneSpectro exported .h5 (single shared 3-D dataset): PASS")
 
         db_path = tmp / "experiments.db"
         from qcodes.dataset import initialise_or_create_database_at
@@ -700,7 +703,7 @@ def main() -> None:
         ds = load_by_id(1)
         pdata = ds.get_parameter_data()
         assert pdata["Sig2Sig1"]["Sig2Sig1"].shape == (n_current * n_pico_freq, 1)
-        print("TwoToneSpectro QCoDeS .db run: PASS")
+        logger.info("TwoToneSpectro QCoDeS .db run: PASS")
 
     # -- full SpectroAWGPumpSweep... script, db + h5 export, incl. the ------
     # -- sub-75mV FIR-compensation path ------------------------------------
@@ -769,7 +772,7 @@ def main() -> None:
         assert len(fir_writes) == len(expected_fir_scale), fir_writes
         for actual, expected in zip(fir_writes, expected_fir_scale):
             assert abs(actual - expected) < 1e-9, (fir_writes, expected_fir_scale)
-        print("AWG FIR-scale compensation sequence (edge-triggered, not per-point): PASS")
+        logger.info("AWG FIR-scale compensation sequence (edge-triggered, not per-point): PASS")
 
         n_freq_vna = vna_params["config"]["freq_spec"][2]
         with h5.File(save_path, "r") as f:
@@ -793,7 +796,7 @@ def main() -> None:
                     assert not np.all(dset[2] == 0)
                     assert "time" in dset.attrs
                     assert "skipped_main_amp_indices" not in dset.attrs
-        print("SpectroAWGPumpSweep exported per-(current,freq) .h5 files, none skipped: PASS")
+        logger.info("SpectroAWGPumpSweep exported per-(current,freq) .h5 files, none skipped: PASS")
 
         db_path = tmp / "experiments.db"
         from qcodes.dataset import initialise_or_create_database_at
@@ -808,7 +811,7 @@ def main() -> None:
         # all 3 requested amplitudes actually get measured now (0 skipped)
         assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_current * n_freq * n_main_amp, n_freq_vna)
         assert "skipped_main_amps_below_75mV" not in ds.metadata
-        print("SpectroAWGPumpSweep QCoDeS .db run: PASS")
+        logger.info("SpectroAWGPumpSweep QCoDeS .db run: PASS")
 
 
 _CRASH_SUBPROCESS_SCRIPT = """
@@ -900,7 +903,7 @@ def test_crash_durability() -> None:
             assert "metadata" in f  # BaseMeasurement's block, written before the sweep
             names = sorted(n for n in f["data"].keys() if n != "vna frequencies")
             n_recovered = len(names)
-            print(f"  recovered {n_recovered}/30 points after SIGKILL mid-sweep")
+            logger.info("recovered %d/30 points after SIGKILL mid-sweep", n_recovered)
             assert 0 < n_recovered < 30, (
                 "expected a partial file (some points recovered, sweep not "
                 f"finished) - got {n_recovered}/30"
@@ -911,9 +914,10 @@ def test_crash_durability() -> None:
             assert f["data"][first].shape == f["data"][last].shape
             assert not np.all(f["data"][last][()] == 0)
             assert "time" in f["data"][last].attrs
-    print("Crash durability (SIGKILL mid-sweep, partial .h5 recovered): PASS")
+    logger.info("Crash durability (SIGKILL mid-sweep, partial .h5 recovered): PASS")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()
     test_crash_durability()

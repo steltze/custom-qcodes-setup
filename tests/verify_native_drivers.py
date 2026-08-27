@@ -40,6 +40,7 @@ Run with: .venv/bin/python tests/verify_native_drivers.py
 
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import tempfile
@@ -49,6 +50,8 @@ from unittest.mock import patch
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+logger = logging.getLogger(__name__)
 
 
 class FakeAnapicoResource:
@@ -233,7 +236,7 @@ def check_standalone_driver() -> None:
     assert configured.get_output_enabled() is True
     configured.close()
 
-    print("standalone driver (native.drivers.anapico_apuasyn20): PASS")
+    logger.info("standalone driver (native.drivers.anapico_apuasyn20): PASS")
 
 
 def check_qcodes_native_instrument() -> None:
@@ -281,7 +284,7 @@ def check_qcodes_native_instrument() -> None:
     assert configured.output_enabled() is True
     configured.close()
 
-    print("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20): PASS")
+    logger.info("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20): PASS")
 
 
 def check_qcodes_measurement_roundtrip() -> None:
@@ -312,7 +315,7 @@ def check_qcodes_measurement_roundtrip() -> None:
 
             df = dataset.to_pandas_dataframe()
             assert len(df) == 3
-            print(f"Measurement/datasaver round-trip: PASS ({len(df)} rows written)")
+            logger.info("Measurement/datasaver round-trip: PASS (%d rows written)", len(df))
     finally:
         anapico.close()
 
@@ -336,7 +339,7 @@ def check_standalone_driver_x() -> None:
     driver.safe_shutdown()
     assert driver.which_outputs_enabled() == {1: False, 2: False, 3: False, 4: False}
     driver.close()
-    print("standalone driver (native.drivers.anapico_apuasyn20x): PASS")
+    logger.info("standalone driver (native.drivers.anapico_apuasyn20x): PASS")
 
 
 def check_qcodes_native_instrument_x() -> None:
@@ -370,7 +373,7 @@ def check_qcodes_native_instrument_x() -> None:
     assert anapico.output_enabled_1() is False
     assert anapico.output_enabled_2() is False
     anapico.close()
-    print("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20X): PASS")
+    logger.info("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20X): PASS")
 
 
 def check_standalone_awg_driver() -> None:
@@ -414,7 +417,7 @@ def check_standalone_awg_driver() -> None:
     assert awg.get_output_enabled(1) is False
     assert awg.get_output_enabled(4) is False
     awg.close()
-    print("standalone driver (native.drivers.keysight_m8195a): PASS")
+    logger.info("standalone driver (native.drivers.keysight_m8195a): PASS")
 
 
 def check_qcodes_native_awg_instrument() -> None:
@@ -449,7 +452,7 @@ def check_qcodes_native_awg_instrument() -> None:
     assert awg.output_enabled_1() is False
     assert awg.output_enabled_4() is False
     awg.close()
-    print("qcodes-native instrument (native.instruments.KeysightM8195A): PASS")
+    logger.info("qcodes-native instrument (native.instruments.KeysightM8195A): PASS")
 
 
 def main() -> None:
@@ -472,4 +475,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     main()

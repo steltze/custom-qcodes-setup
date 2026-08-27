@@ -32,6 +32,7 @@
 # enabling RF) has a comment right above it - read it before running.
 
 # %%
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,9 @@ from legacy.instruments.KeysightM8195A import KeysightM8195A
 from stock_instruments.KeysightP5024A import KeysightP5024A
 from stock_instruments.YokogawaGS200 import YokogawaGS200
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
+
 BRINGUP_DIR = REPO_ROOT / "data" / "bringup"
 BRINGUP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -67,45 +71,45 @@ def scratch_h5_path(name: str) -> str:
 
 
 def inspect_h5(path: str) -> None:
-    """Print every group/dataset (shape, dtype) and every attr in the file,
+    """Log every group/dataset (shape, dtype) and every attr in the file,
     so you can actually look at what a smoke test wrote."""
-    print(f"--- {path} ---")
+    logger.info("--- %s ---", path)
     with h5py.File(path, "r") as f:
         for key, val in f.attrs.items():
-            print(f"  @{key} = {val!r}")
+            logger.info("  @%s = %r", key, val)
 
         def show(name, obj):
             if isinstance(obj, h5py.Dataset):
-                print(f"  {name}: shape={obj.shape} dtype={obj.dtype}")
+                logger.info("  %s: shape=%s dtype=%s", name, obj.shape, obj.dtype)
             else:
-                print(f"  {name}/")
+                logger.info("  %s/", name)
             for key, val in obj.attrs.items():
                 shown = val if np.ndim(val) == 0 else f"array{np.shape(val)}"
-                print(f"    @{key} = {shown!r}")
+                logger.info("    @%s = %r", key, shown)
 
         f.visititems(show)
 
 
 def inspect_latest_run(db_path, experiment_name: str) -> None:
     """Open the most recent qcodes run for `experiment_name` in `db_path`
-    and print its shape/metadata - "most recent" so rerunning a smoke-test
+    and log its shape/metadata - "most recent" so rerunning a smoke-test
     cell doesn't require tracking run ids by hand."""
     initialise_or_create_database_at(db_path)
     matches = [e for e in experiments() if e.name == experiment_name]
     if not matches:
-        print(f"--- no experiment named {experiment_name!r} in {db_path} yet ---")
+        logger.info("--- no experiment named %r in %s yet ---", experiment_name, db_path)
         return
     ds = matches[-1].data_sets()[-1]
-    print(f"--- {db_path} :: {experiment_name} :: run id {ds.run_id} ---")
-    print("  completed:", ds.completed)
+    logger.info("--- %s :: %s :: run id %s ---", db_path, experiment_name, ds.run_id)
+    logger.info("  completed: %s", ds.completed)
     pdata = ds.get_parameter_data()
     for dependent, columns in pdata.items():
         shapes = {name: arr.shape for name, arr in columns.items()}
-        print(f"  {dependent}: {shapes}")
-    print("  metadata keys:", list(ds.metadata.keys()))
+        logger.info("  %s: %s", dependent, shapes)
+    logger.info("  metadata keys: %s", list(ds.metadata.keys()))
 
 
-print("Setup OK. Scratch data directory:", BRINGUP_DIR)
+logger.info("Setup OK. Scratch data directory: %s", BRINGUP_DIR)
 
 # %% [markdown]
 # ## Config - fill in your real VISA addresses before running anything below
@@ -133,15 +137,15 @@ vna = KeysightP5024A(
     VNA_ADDRESS,
     config={"power": SAFE_VNA_POWER, "if_bandwidth": 1000, "freq_spec": (3e9, 13e9, 51)},
 )
-print(vna.get_idn())
+logger.info("%s", vna.get_idn())
 
 # %%
 # Read-only - confirm what actually got configured.
-print("power:", vna.power())
-print("if_bandwidth:", vna.if_bandwidth())
-print("points:", vna.points())
-print("output:", vna.output())
-print("power_slope:", vna.power_slope())
+logger.info("power: %s", vna.power())
+logger.info("if_bandwidth: %s", vna.if_bandwidth())
+logger.info("points: %s", vna.points())
+logger.info("output: %s", vna.output())
+logger.info("power_slope: %s", vna.power_slope())
 
 # %%
 # One measurement, one averaged sweep, read it back.
@@ -149,18 +153,18 @@ vna.configure_measurements((("Sig2Sig1", "S21"),))
 vna.run_averaging()
 freq_data = vna.read_freq_data()
 trace = vna.read_raw_data("Sig2Sig1")
-print("freq_data:", freq_data.shape, freq_data[:3], "...")
-print("trace:", trace.shape, trace.dtype, trace[:3])
+logger.info("freq_data: %s %s ...", freq_data.shape, freq_data[:3])
+logger.info("trace: %s %s %s", trace.shape, trace.dtype, trace[:3])
 
 # %%
 # power_slope get/set round-trip.
 vna.power_slope(1.0)
-print("power_slope after set:", vna.power_slope())
+logger.info("power_slope after set: %s", vna.power_slope())
 vna.power_slope(0.0)
 
 # %%
 vna.close()
-print("VNA closed.")
+logger.info("VNA closed.")
 
 # %% [markdown]
 # # 2. Yokogawa (YokogawaGS200)
@@ -173,52 +177,52 @@ yoko = YokogawaGS200(
     "yoko_bringup", YOKO_ADDRESS,
     config={"mode": "CURR", "current_range": "1 mA"},
 )
-print(yoko.get_idn())
-print("output right after construction (should be False):", yoko.output())
+logger.info("%s", yoko.get_idn())
+logger.info("output right after construction (should be False): %s", yoko.output())
 
 # %%
 # Read-only.
-print("source_mode:", yoko.source_mode())
-print("current_range:", yoko.current_range())
-print("current:", yoko.current())
+logger.info("source_mode: %s", yoko.source_mode())
+logger.info("current_range: %s", yoko.current_range())
+logger.info("current: %s", yoko.current())
 
 # %% SAFETY: this turns the DC source's output ON at 0 A. Check the physical
 # setup is ready for that before running this cell.
 yoko.output("on")
 yoko.current(0.0)
-print("current after set:", yoko.current())
+logger.info("current after set: %s", yoko.current())
 
 # %%
 yoko.reset_config()
-print("output after reset_config (should be False):", yoko.output())
+logger.info("output after reset_config (should be False): %s", yoko.output())
 yoko.close()
-print("Yokogawa closed.")
+logger.info("Yokogawa closed.")
 
 # %% [markdown]
 # # 3. AWG (KeysightM8195A)
 
 # %%
 awg = KeysightM8195A("awg_bringup", AWG_ADDRESS)
-print(awg.get_idn())
+logger.info("%s", awg.get_idn())
 
 # %%
 # Read-only.
-print("dac_mode:", awg.dac_mode())
-print("sample_rate:", awg.sample_rate())
-print("amplitude_1:", awg.amplitude_1())
+logger.info("dac_mode: %s", awg.dac_mode())
+logger.info("sample_rate: %s", awg.sample_rate())
+logger.info("amplitude_1: %s", awg.amplitude_1())
 
 # %% SAFETY: this downloads and plays a low-amplitude (75mV) sine on
 # channel 1. Check the physical setup is ready for that before running this
 # cell.
 seg_id = awg.send_sine(freq=5e8, phase=0.0, channel=1, amp=SAFE_AWG_AMP)
 awg.ask_if_done()
-print("segment id:", seg_id, "amplitude_1 now:", awg.amplitude_1())
+logger.info("segment id: %s amplitude_1 now: %s", seg_id, awg.amplitude_1())
 
 # %%
 awg.stop(1)
 awg.clear_all_wfm()
 awg.close()
-print("AWG closed.")
+logger.info("AWG closed.")
 
 # %% [markdown]
 # # 4. Anapico (AnaPicoAPUASYN20X - 4 channels)
@@ -244,26 +248,28 @@ pico = AnaPicoAPUASYN20X(
         "outputs": ("OFF", "OFF", "OFF", "OFF"),
     },
 )
-print(pico.get_idn())
+logger.info("%s", pico.get_idn())
 
 # %%
 # Read-only, all 4 channels at once.
 for ch in (1, 2, 3, 4):
-    print(f"ch{ch}: freq={getattr(pico, f'frequency_{ch}')()} "
-          f"power={getattr(pico, f'power_{ch}')()}")
-print("which_outputs_enabled (should be all False):", pico.which_outputs_enabled())
-print("reference_source:", pico.reference_source())
+    logger.info(
+        "ch%d: freq=%s power=%s",
+        ch, getattr(pico, f"frequency_{ch}")(), getattr(pico, f"power_{ch}")(),
+    )
+logger.info("which_outputs_enabled (should be all False): %s", pico.which_outputs_enabled())
+logger.info("reference_source: %s", pico.reference_source())
 
 # %% SAFETY: this turns RF output ON at -10 dBm, 5 GHz, on channel 1 only.
 # Check the physical setup is ready for that before running this cell.
 pico.output_enabled_1(True)
-print("which_outputs_enabled after set:", pico.which_outputs_enabled())
+logger.info("which_outputs_enabled after set: %s", pico.which_outputs_enabled())
 
 # %%
 pico.safe_shutdown()
-print("which_outputs_enabled after safe_shutdown (should be all False):", pico.which_outputs_enabled())
+logger.info("which_outputs_enabled after safe_shutdown (should be all False): %s", pico.which_outputs_enabled())
 pico.close()
-print("Anapico closed.")
+logger.info("Anapico closed.")
 
 # %% [markdown]
 # # 5. VNACalibSlopeCustomMeas - VNA only
@@ -295,7 +301,7 @@ vna_calib = VNACalibSlopeCustomMeas(
     sweep_params={"pts_list": (11,), "bw_list": (1000,), "power_slope": 0.0},
 )
 vna_calib.execute()
-print("done:", vna_calib_save_path)
+logger.info("done: %s", vna_calib_save_path)
 
 # %%
 inspect_h5(vna_calib_save_path)
@@ -332,7 +338,7 @@ flux_meas = SpectroDCSweepSlope(
     },
 )
 flux_meas.execute()
-print("done:", flux_save_path)
+logger.info("done: %s", flux_save_path)
 
 # %%
 inspect_h5(flux_save_path)
@@ -374,7 +380,7 @@ two_tone_meas = TwoToneSpectro(
     },
 )
 two_tone_meas.execute()
-print("done:", two_tone_save_path)
+logger.info("done: %s", two_tone_save_path)
 
 # %%
 inspect_h5(two_tone_save_path)
@@ -419,7 +425,7 @@ awg_pump_meas = SpectroAWGPumpSweepFIRSimpNOCompSweepFlux(
     },
 )
 awg_pump_meas.execute()
-print("done:", awg_pump_save_path)
+logger.info("done: %s", awg_pump_save_path)
 
 # %%
 inspect_h5(awg_pump_save_path)
