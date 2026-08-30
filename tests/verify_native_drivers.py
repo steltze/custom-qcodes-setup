@@ -205,7 +205,8 @@ class _FakeResourceManager:
         return self._factory()
 
 
-def check_standalone_driver() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource))
+def test_standalone_driver() -> None:
     from native.drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
 
     driver = RawAnaPico("anapico_raw", "TCPIP::169.254.1.2::INSTR")
@@ -239,7 +240,8 @@ def check_standalone_driver() -> None:
     logger.info("standalone driver (native.drivers.anapico_apuasyn20): PASS")
 
 
-def check_qcodes_native_instrument() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource))
+def test_qcodes_native_instrument() -> None:
     import qcodes.instrument
 
     from native.drivers.anapico_apuasyn20 import AnaPicoAPUASYN20 as RawAnaPico
@@ -287,7 +289,8 @@ def check_qcodes_native_instrument() -> None:
     logger.info("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20): PASS")
 
 
-def check_qcodes_measurement_roundtrip() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource))
+def test_qcodes_measurement_roundtrip() -> None:
     from qcodes.dataset import (
         Measurement,
         initialise_or_create_database_at,
@@ -320,7 +323,8 @@ def check_qcodes_measurement_roundtrip() -> None:
         anapico.close()
 
 
-def check_standalone_driver_x() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource))
+def test_standalone_driver_x() -> None:
     from native.drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
 
     driver = RawAnaPicoX(
@@ -342,7 +346,8 @@ def check_standalone_driver_x() -> None:
     logger.info("standalone driver (native.drivers.anapico_apuasyn20x): PASS")
 
 
-def check_qcodes_native_instrument_x() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource))
+def test_qcodes_native_instrument_x() -> None:
     import qcodes.instrument
 
     from native.drivers.anapico_apuasyn20x import AnaPicoAPUASYN20X as RawAnaPicoX
@@ -376,7 +381,8 @@ def check_qcodes_native_instrument_x() -> None:
     logger.info("qcodes-native instrument (native.instruments.AnaPicoAPUASYN20X): PASS")
 
 
-def check_standalone_awg_driver() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeM8195AResource))
+def test_standalone_awg_driver() -> None:
     from native.drivers.keysight_m8195a import KeysightM8195A as RawAWG
 
     awg = RawAWG("awg_raw", "TCPIP0::169.254.3.1::inst0::INSTR")
@@ -420,7 +426,8 @@ def check_standalone_awg_driver() -> None:
     logger.info("standalone driver (native.drivers.keysight_m8195a): PASS")
 
 
-def check_qcodes_native_awg_instrument() -> None:
+@patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeM8195AResource))
+def test_qcodes_native_awg_instrument() -> None:
     import qcodes.instrument
 
     from native.drivers.keysight_m8195a import KeysightM8195A as RawAWG
@@ -456,22 +463,17 @@ def check_qcodes_native_awg_instrument() -> None:
 
 
 def main() -> None:
-    with patch(
-        "pyvisa.ResourceManager",
-        lambda *a, **kw: _FakeResourceManager(FakeAnapicoResource),
-    ):
-        check_standalone_driver()
-        check_qcodes_native_instrument()
-        check_qcodes_measurement_roundtrip()
-        check_standalone_driver_x()
-        check_qcodes_native_instrument_x()
-
-    with patch(
-        "pyvisa.ResourceManager",
-        lambda *a, **kw: _FakeResourceManager(FakeM8195AResource),
-    ):
-        check_standalone_awg_driver()
-        check_qcodes_native_awg_instrument()
+    """Run every check in this file in one go - same effective coverage as
+    `pytest` collecting all `test_*` functions below (each now self-patches
+    via its own @patch decorator), kept for direct
+    ``python tests/verify_native_drivers.py`` runs."""
+    test_standalone_driver()
+    test_qcodes_native_instrument()
+    test_qcodes_measurement_roundtrip()
+    test_standalone_driver_x()
+    test_qcodes_native_instrument_x()
+    test_standalone_awg_driver()
+    test_qcodes_native_awg_instrument()
 
 
 if __name__ == "__main__":

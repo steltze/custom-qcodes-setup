@@ -27,6 +27,9 @@ dependencies = [
 [project.optional-dependencies]
 sim = ["PyVISA-sim==0.7.1"]
 
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 packages = [
@@ -41,3 +44,7 @@ packages = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/*.py are named verify_*.py (each also runnable directly, hence the
+# "Run with: .venv/bin/python tests/verify_X.py" docstrings), not pytest's
+# default test_*.py - opt them into collection explicitly.
+python_files = ["test_*.py", "verify_*.py"]

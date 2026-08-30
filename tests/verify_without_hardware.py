@@ -197,7 +197,7 @@ class _FakeResourceManager:
         return self._factory()
 
 
-def main() -> None:
+def test_verify_without_hardware() -> None:
     with (
         patch("pyvisa.ResourceManager", lambda *a, **kw: _FakeResourceManager(FakeM8195AResource)),
         patch(
@@ -268,4 +268,4 @@ if __name__ == "__main__":
 
     start_all_logging()
 
-    main()
+    test_verify_without_hardware()

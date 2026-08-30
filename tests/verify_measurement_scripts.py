@@ -441,7 +441,7 @@ def _open_p5024a_with_fake(name: str, address: str):
         return KeysightP5024A(name, address)
 
 
-def main() -> None:
+def test_keysight_p5024a_roundtrip() -> None:
     vna = _open_p5024a_with_fake("vna_sim", "TCPIP::169.254.1.3::INSTR")
 
     vna.configure_measurements(
@@ -461,6 +461,8 @@ def main() -> None:
     logger.info("KeysightP5024A parameter/trace round-trip: PASS")
     vna.close()
 
+
+def test_vna_calib_slope_custom_meas() -> None:
     # -- full VNACalibSlopeCustomMeas script, db + h5 export -------------
 
     from measurement_scripts.vna_calib_slope_custom_meas import VNACalibSlopeCustomMeas
@@ -536,6 +538,7 @@ def main() -> None:
             assert ds.metadata["n_pts"] == str(n_pt)
         logger.info("QCoDeS .db runs: PASS")
 
+def test_spectro_dc_sweep_slope() -> None:
     # -- full SpectroDCSweepSlope script, db + h5 export ------------------
     from measurement_scripts.spectro_flux_sweep_slope import SpectroDCSweepSlope
 
@@ -615,6 +618,7 @@ def main() -> None:
         assert "instruments" in ds.metadata
         logger.info("SpectroDCSweepSlope QCoDeS .db run: PASS")
 
+def test_two_tone_spectro() -> None:
     # -- full TwoToneSpectro script, db + h5 export ------------------------
     # AnaPicoAPUASYN20 doesn't go through qcodes' VisaInstrument at all - it
     # wraps the exopy-legacy Anapico1 driver, which opens its own
@@ -705,8 +709,15 @@ def main() -> None:
         assert pdata["Sig2Sig1"]["Sig2Sig1"].shape == (n_current * n_pico_freq, 1)
         logger.info("TwoToneSpectro QCoDeS .db run: PASS")
 
+def test_spectro_awg_pump_sweep() -> None:
     # -- full SpectroAWGPumpSweep... script, db + h5 export, incl. the ------
     # -- sub-75mV FIR-compensation path ------------------------------------
+    # _FakeResourceManager used to reach this section via `main()`'s single
+    # shared scope (one import for the whole file); now that each check is
+    # its own function, this needs its own import - see the same import in
+    # test_two_tone_spectro().
+    from verify_without_hardware import _FakeResourceManager
+
     from measurement_scripts.spectro_awgPump_sweep_variable_ranges_simpNOCompOnly_powSlope_sweep_flux import (
         SpectroAWGPumpSweepFIRSimpNOCompSweepFlux,
     )
@@ -812,6 +823,17 @@ def main() -> None:
         assert pdata["Sig1Sig1"]["Sig1Sig1"].shape == (n_current * n_freq * n_main_amp, n_freq_vna)
         assert "skipped_main_amps_below_75mV" not in ds.metadata
         logger.info("SpectroAWGPumpSweep QCoDeS .db run: PASS")
+
+
+def main() -> None:
+    """Run every check in this file in one go - same effective coverage as
+    `pytest` collecting all `test_*` functions below, kept for direct
+    ``python tests/verify_measurement_scripts.py`` runs."""
+    test_keysight_p5024a_roundtrip()
+    test_vna_calib_slope_custom_meas()
+    test_spectro_dc_sweep_slope()
+    test_two_tone_spectro()
+    test_spectro_awg_pump_sweep()
 
 
 _CRASH_SUBPROCESS_SCRIPT = """
