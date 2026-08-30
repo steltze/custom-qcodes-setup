@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "custom-qcodes-setup"
 version = "0.1.0"
-description = "Custom QCoDeS instrument drivers and measurement scripts for the lab setup"
+description = "QCoDeS instrument drivers and measurement scripts for LPENS-Quantic's superconducting-circuit experiments."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

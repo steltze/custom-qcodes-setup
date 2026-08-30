@@ -99,8 +99,7 @@ def to_grid(raw):
 
 s12 = to_grid(grid_pdata["Sig1Sig2"]["Sig1Sig2"])
 s21 = to_grid(grid_pdata["Sig2Sig1"]["Sig2Sig1"])
-# swap the last two axes to match the .h5 section's
-# (current, pump_freq, signal_freq, pump_amp) order.
+
 s12 = np.moveaxis(s12, -1, -2)
 s21 = np.moveaxis(s21, -1, -2)
 

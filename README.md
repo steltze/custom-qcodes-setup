@@ -1,6 +1,7 @@
 # custom-qcodes-setup
 
-Custom QCoDeS instrument drivers and measurement scripts for the lab setup.
+QCoDeS instrument drivers and measurement scripts for LPENS-Quantic's
+superconducting-circuit experiments.
 
 ## Setup
 
