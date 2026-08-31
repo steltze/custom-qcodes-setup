@@ -3,6 +3,8 @@
 QCoDeS instrument drivers and measurement scripts for LPENS-Quantic's
 superconducting-circuit experiments.
 
+> **Note:** This project is not intended to be a standalone library. Rather, it serves as a reference implementation and provides preliminary instrument drivers not yet supported by the official [QCoDeS](https://github.com/QCoDeS/Qcodes) distribution or its [community drivers](https://github.com/QCoDeS/Qcodes_contrib_drivers) repository.
+
 ## Setup
 
 Dependencies and the virtual environment are managed with [uv](https://docs.astral.sh/uv/).
